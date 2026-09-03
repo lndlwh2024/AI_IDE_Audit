@@ -1,0 +1,53 @@
+# IDE_Audit 客观事实报告
+
+- **审计时间**: {{ timestamp }}
+- **Commit**: `{{ commit_hash[:12] }}`
+- **Commit Message**: {{ commit_message }}
+
+## 用户需求（共 {{ prompts | length }} 条）
+
+{% if prompts %}
+{% for p in prompts %}
+{{ loop.index }}. {{ p.text }}  
+   _({{ p.timestamp }})_
+{% endfor %}
+{% else %}
+_无记录的用户需求_
+{% endif %}
+
+## 变更摘要
+
+| 指标 | 数值 |
+|:---|:---|
+| 变更文件总数 | {{ diff_summary.total_files_changed }} |
+| 新增行数 | +{{ diff_summary.total_additions }} |
+| 删除行数 | -{{ diff_summary.total_deletions }} |
+
+## 变更文件清单
+
+| 文件路径 | 类型 | +行 | -行 |
+|:---|:---:|:---:|:---:|
+{% for f in changed_files %}
+| `{{ f.path }}` | {{ f.change_type }} | +{{ f.additions }} | -{{ f.deletions }} |
+{% endfor %}
+
+## 架构变更信号（共 {{ signal_summary.total }} 个）
+
+{% if architecture_signals %}
+| 维度 | 严重级别 | 文件 | 描述 |
+|:---|:---:|:---|:---|
+{% for s in architecture_signals %}
+{% if s.severity == "HIGH" %}
+| {{ s.dimension }} | 🔴 HIGH | `{{ s.file_path }}` | {{ s.description }} |
+{% else %}
+| {{ s.dimension }} | 🟠 MEDIUM | `{{ s.file_path }}` | {{ s.description }} |
+{% endif %}
+{% endfor %}
+{% else %}
+_未检测到架构变更信号_
+{% endif %}
+
+---
+
+> 本报告由 IDE_Audit 规则引擎自动生成，仅包含客观物理事实。
+> 最终审计裁决（通过/不通过）由 B 窗口审计 LLM 负责。

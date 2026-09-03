@@ -1,0 +1,148 @@
+# IDE_Audit 默认审计规则集 — 9 大架构变更检测维度
+#
+# 每条规则包含：
+#   id: 唯一标识
+#   dimension: 所属检测维度（对应 schema.py 中的 Dimension 枚举）
+#   severity: 严重级别（HIGH / MEDIUM）
+#   description: 人类可读描述
+#   file_patterns: 文件路径 glob 匹配（满足任一即命中）
+#   content_patterns: 代码内容正则匹配（满足任一即命中）
+
+rules:
+  # ── 维度 1：文件/目录结构变更 ──
+  - id: DIR_STRUCTURE_NEW_DELETE
+    dimension: "文件/目录结构变更"
+    severity: HIGH
+    description: "检测到目录级别的新增或删除"
+    file_patterns: []
+    content_patterns: []
+    # 特殊处理：由 architecture_detector 根据 FileChange 类型（A/D）和路径深度判断
+
+  # ── 维度 2：数据库 Schema 变更 ──
+  - id: DB_MIGRATION_FILE
+    dimension: "数据库Schema变更"
+    severity: HIGH
+    description: "检测到数据库 migration 文件新增或修改"
+    file_patterns:
+      - "**/migrations/**"
+      - "**/migrate/**"
+      - "**/alembic/**"
+      - "**/*migration*"
+    content_patterns: []
+
+  - id: DB_SCHEMA_DDL
+    dimension: "数据库Schema变更"
+    severity: HIGH
+    description: "检测到数据库 DDL 语句（ALTER/CREATE/DROP TABLE）"
+    file_patterns: []
+    content_patterns:
+      - "(?i)(ALTER|CREATE|DROP)\\s+TABLE"
+      - "(?i)(ALTER|CREATE|DROP)\\s+INDEX"
+      - "(?i)(ALTER|CREATE|DROP)\\s+DATABASE"
+
+  # ── 维度 3：API/接口变更 ──
+  - id: API_ROUTE_CHANGE
+    dimension: "API/接口变更"
+    severity: HIGH
+    description: "检测到 API 路由定义的变更"
+    file_patterns:
+      - "**/routes/**"
+      - "**/routers/**"
+      - "**/endpoints/**"
+      - "**/views/**"
+      - "**/urls.py"
+    content_patterns:
+      - "@(app|router|blueprint)\\.(get|post|put|delete|patch|route)"
+      - "path\\s*\\("
+      - "url\\s*\\("
+
+  # ── 维度 4：模块合并/拆分 ──
+  - id: MODULE_RENAME_MOVE
+    dimension: "模块合并/拆分"
+    severity: HIGH
+    description: "检测到文件重命名或移动（可能涉及模块拆分/合并）"
+    file_patterns: []
+    content_patterns: []
+    # 特殊处理：由 architecture_detector 根据 FileChange 类型（R）判断
+
+  # ── 维度 5：安全边界变更 ──
+  - id: SECURITY_AUTH_CHANGE
+    dimension: "安全边界变更"
+    severity: HIGH
+    description: "检测到认证/授权/密钥相关代码变更"
+    file_patterns:
+      - "**/auth/**"
+      - "**/security/**"
+      - "**/permission*"
+      - "**/middleware*"
+    content_patterns:
+      - "(?i)(api_key|secret_key|password|token|credential|jwt|oauth)"
+      - "(?i)(authenticate|authorize|login|logout|session)"
+
+  # ── 维度 6：执行模型变更 ──
+  - id: EXECUTION_MODEL_CHANGE
+    dimension: "执行模型变更"
+    severity: HIGH
+    description: "检测到并发模型、异步调度或消息队列相关变更"
+    file_patterns:
+      - "**/celery*"
+      - "**/tasks/**"
+      - "**/workers/**"
+      - "**/queue*"
+    content_patterns:
+      - "(?i)(asyncio|aiohttp|async\\s+def|await\\s)"
+      - "(?i)(threading|multiprocessing|concurrent\\.futures)"
+      - "(?i)(celery|rabbitmq|kafka|redis\\.queue)"
+
+  # ── 维度 7：模块依赖边界变更 ──
+  - id: DEPENDENCY_BOUNDARY_CHANGE
+    dimension: "模块依赖边界变更"
+    severity: MEDIUM
+    description: "检测到跨模块 import 关系变更"
+    file_patterns:
+      - "**/requirements*.txt"
+      - "**/setup.py"
+      - "**/setup.cfg"
+      - "**/pyproject.toml"
+      - "**/package.json"
+      - "**/go.mod"
+      - "**/Cargo.toml"
+    content_patterns:
+      - "(?i)^(import|from)\\s+"
+
+  # ── 维度 8：配置/环境变更 ──
+  - id: CONFIG_ENV_CHANGE
+    dimension: "配置/环境变更"
+    severity: MEDIUM
+    description: "检测到环境变量、构建配置或部署配置的变更"
+    file_patterns:
+      - "**/.env*"
+      - "**/Dockerfile*"
+      - "**/docker-compose*"
+      - "**/.github/**"
+      - "**/.gitlab-ci*"
+      - "**/Jenkinsfile*"
+      - "**/Makefile"
+      - "**/nginx*"
+      - "**/*.conf"
+    content_patterns: []
+
+  # ── 维度 9：共享契约变更 ──
+  - id: SHARED_CONTRACT_CHANGE
+    dimension: "共享契约变更"
+    severity: MEDIUM
+    description: "检测到类型定义、接口定义或共享常量的变更"
+    file_patterns:
+      - "**/types.py"
+      - "**/types/**"
+      - "**/schemas.py"
+      - "**/schemas/**"
+      - "**/interfaces/**"
+      - "**/protocols/**"
+      - "**/constants.py"
+      - "**/enums.py"
+      - "**/*.d.ts"
+      - "**/*.proto"
+      - "**/*.graphql"
+    content_patterns:
+      - "(?i)(Protocol|Interface|Abstract|TypeVar|Generic)\\s*[\\(\\[]"
