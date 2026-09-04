@@ -10,20 +10,30 @@
 - **首个适配**：Codex Windows 桌面版（ChatGPT desktop app，Powered by Codex & OWL）
 - **开源协议**：MIT
 
-## 2. 核心架构与裁决逻辑
+## 2. 核心架构与两阶段工作机制
 
-IDE_Audit 采用"同一 AI IDE，双窗口分离审计"架构：
-- **A 窗口（开发）**：用户正常开发，Skill 自动捕获 prompt（两次 commit 间的全部用户提示词）。
-- **IDE Audit Server（本地 MCP 服务）**：负责提取物理事实（Git Diff）、运行确定性规则引擎扫描 9 大架构变更信号。输出客观物理事实，不作语义越权判断，结果不可被篡改。
-- **B 窗口（审计与最终裁决）**：commit 后通过 `codex app-server` API 自动创建/复用独立审计会话（无开发记忆）。直接继承 IDE Audit Server 的物理客观结果，并由 LLM 负责需求与代码实现的语义一致性审计。
-- **一票否决裁决制**：物理检测合规且语义范围合理才判定通过；任一项不合规即判定不通过。无论是否通过，均必须输出完整的变更资源清单与详细原因。
+IDE_Audit 采用"同一 AI IDE，双窗口分离审计 + 双系统融合"架构：
+- **A 窗口（开发）**：用户正常开发，维护 `dual-agent-sync` 代码图谱与操作记账本，Skill 自动捕获两次 commit 间的全部用户提示词，修改完毕后自动执行 `git commit`。
+- **阶段一：IDE Audit Server（本地物理与图谱分析，只读）**：
+  - 提取最高权重物理事实（Git Diff `HEAD~1..HEAD`）；
+  - 结合 `codegraph/graph.json` 与规则引擎扫描架构/模型层「是否有变更」及受影响节点依赖边；
+  - 结合 `collab/ledger.jsonl` 核验实际 Diff 与记账本的完整出入清单（未声明偷改、虚报、范围出入）；
+  - 输出客观分析报告包，**不作主观越权判断**。
+- **阶段二：B 窗口（独立审计会话，双尺度研判与答疑，只读）**：
+  - commit 后通过 `codex app-server` API 自动拉起或复用独立审计会话（无开发记忆）；
+  - 接收阶段一客观事实包、用户原始需求、代码图谱与记账申报；
+  - **双尺度裁决（架构合理性 + 文件强相关性）**：
+    - 宏观：架构/模型变更是否在需求授权范围内；
+    - 微观：每个改动文件是否与需求强相关（**即便架构合理，改动了无关文件也判定为不合理**）；
+    - 出入：结合出入清单核查未声明修改。
+  - **只读与交互答疑**：插件绝对无代码写权限，输出结构化报告后会话保持存活，支持用户继续追问答疑。
 - 支持自动触发（post-commit hook）和手动触发（`archguard audit`），审计范围始终严格限定为最后一次 commit（HEAD~1..HEAD）。
 
 ## 3. 项目文档
 
 | 文档 | 路径 | 说明 |
 |:---|:---|:---|
-| 产品设计文档 | `docs/PRODUCT_DESIGN.md` | 完整的可行性分析、技术架构、审计流程、开发计划 |
+| 产品设计文档 | `docs/PRODUCT_DESIGN.md` | 完整的产品设计、技术架构、审计流程、四阶段计划 |
 | 技术架构文档 | `docs/ARCHITECTURE.md` | 技术架构细节 |
 | 本文件 | `AGENTS.md` | 项目协作规则 |
 
@@ -34,19 +44,24 @@ IDE_Audit 采用"同一 AI IDE，双窗口分离审计"架构：
 - 使用 GitHub 统一部署发布
 - 每次 git push 成功后提示版本号和变更内容
 
-## 5. 开发阶段
+## 5. 开发阶段（4 个阶段）
 
-### 阶段一：核心引擎（当前）
-- `archguard/core/` — 审计主引擎、Diff 分析、架构检测、需求存储、报告生成
-- `archguard/rules/` — 固定审计规则库
+### 阶段一：核心物理审计引擎（✅ 已完成，v0.1.0）
+- `archguard/core/` — 审计主引擎、Diff 分析、架构规则检测、需求存储、报告生成（27个测试全通，已发布GitHub）
+- `archguard/rules/` — 固定审计规则库（9大检测维度）
 
-### 阶段二：MCP Server + Codex 桌面版适配
-- `archguard/mcp/` — MCP Server 实现
-- `archguard/adapters/codex/` — Codex 桌面版适配（含 codex app-server 会话管理）
+### 阶段二：CodeGraph 架构图谱与记账出入核验（当前阶段）
+- `archguard/core/graph_analyzer.py` — 代码图谱拓扑解析与依赖变动分析
+- `archguard/core/ledger_analyzer.py` — 记账本与 Diff 出入核验
+- `archguard/core/engine.py` — 升级主引擎编排客观分析包
 
-### 阶段三：CLI + 测试 + 文档
-- `archguard/cli/` — CLI 工具
-- `tests/` — 单元测试
+### 阶段三：MCP Server + Codex 桌面版适配
+- `archguard/mcp/` — 只读 MCP Server 实现
+- `archguard/adapters/codex/` — Codex 桌面版会话管理（app-server API）与双端 Skill 模板
+
+### 阶段四：CLI + 全场景测试 + 文档
+- `archguard/cli/` — CLI 完整命令矩阵
+- `tests/` — 端到端集成测试与交付文档
 
 ## 6. 目录结构
 
