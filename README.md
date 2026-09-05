@@ -34,8 +34,8 @@ archguard install --ide codex
 
 ## 文档
 
-- [产品设计文档](docs/PRODUCT_DESIGN.md)
-- [技术架构文档](docs/ARCHITECTURE.md)
+- [产品设计文档 V2.0](docs/PRODUCT_DESIGN_V2.0.md)
+- [产品设计文档 V1.0（历史归档）](docs/PRODUCT_DESIGN_V1.0.md)
 
 ## License
 

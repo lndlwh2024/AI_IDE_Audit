@@ -33,9 +33,14 @@ IDE_Audit 采用"同一 AI IDE，双窗口分离审计 + 双系统融合"架构�
 
 | 文档 | 路径 | 说明 |
 |:---|:---|:---|
-| 产品设计文档 | `docs/PRODUCT_DESIGN.md` | 完整的产品设计、技术架构、审计流程、四阶段计划 |
-| 技术架构文档 | `docs/ARCHITECTURE.md` | 技术架构细节 |
+| 产品设计文档（V2.0 终局融合版） | `docs/PRODUCT_DESIGN_V2.0.md` | 完整的产品设计、技术架构、审计流程、四阶段计划（含 dual-agent-sync 整合） |
+| 产品设计文档（V1.0 历史归档） | `docs/PRODUCT_DESIGN_V1.0.md` | V1.0 历史版本，保留不改 |
 | 本文件 | `AGENTS.md` | 项目协作规则 |
+
+## 3.1 核心架构分工边界
+
+- `archguard/sync/`：负责数据的**写入与维护**（由 A 窗口 MCP 工具调用），继承 dual-agent-sync 100% 功能
+- `archguard/core/`：负责数据的**只读分析与扫描**（由审计引擎调用），不修改任何文件
 
 ## 4. 开发约定
 

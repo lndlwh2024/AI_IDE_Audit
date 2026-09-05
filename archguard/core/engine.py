@@ -1,12 +1,14 @@
-"""审计主引擎 — 编排物理事实收集与架构信号扫描
+"""审计主引擎 — 编排物理事实收集、架构信号扫描、图谱分析与记账核验
 
 核心编排流程：
     1. 调用 diff_analyzer 提取最后一次 commit 的物理变更事实
     2. 调用 prompt_store 读取两次 commit 之间的全部用户需求
     3. 调用 rules.loader 加载审计规则
     4. 调用 architecture_detector 执行 9 大维度规则扫描
-    5. 归档 pending prompts
-    6. 组装客观事实数据包并持久化保存
+    5. 调用 graph_analyzer 执行图谱拓扑变动分析（阶段二新增）
+    6. 调用 ledger_analyzer 执行记账出入核验（阶段二新增）
+    7. 归档 pending prompts
+    8. 组装客观事实数据包并持久化保存
 
 本引擎不做任何语义判断，只产出客观事实供 B 窗口 LLM 裁决。
 """
@@ -20,11 +22,14 @@ from pydantic import BaseModel, Field
 
 from archguard.config.settings import (
     ensure_directories,
+    get_audit_root,
     get_latest_result_file,
     get_results_history_dir,
 )
 from archguard.core.architecture_detector import detect_signals, summarize_signals
 from archguard.core.diff_analyzer import analyze_commit
+from archguard.core.graph_analyzer import analyze_graph_changes
+from archguard.core.ledger_analyzer import verify_ledger_consistency
 from archguard.core.prompt_store import archive_and_clear, get_pending_prompts
 from archguard.rules.loader import load_default_rules
 
@@ -69,6 +74,18 @@ class AuditResult(BaseModel):
         description="架构信号按维度和严重级别的统计汇总",
     )
 
+    # 图谱拓扑变动分析：基于 codegraph 的依赖变化检测（阶段二新增）
+    graph_analysis: dict = Field(
+        default_factory=dict,
+        description="图谱拓扑变动分析结果（节点/边增删、跨模块违规、循环依赖）",
+    )
+
+    # 记账一致性核验：Diff 实际改动与记账本声明的出入比对（阶段二新增）
+    ledger_verification: dict = Field(
+        default_factory=dict,
+        description="记账出入核验结果（未声明文件、虚报文件、一致性评分）",
+    )
+
 
 def run_audit(project_root: str | Path) -> AuditResult:
     """执行完整的审计分析流程
@@ -90,26 +107,76 @@ def run_audit(project_root: str | Path) -> AuditResult:
     logger.info("项目路径: %s", project_root)
 
     # ① 提取最后一次 commit 的物理变更事实（仅物理层面，不作推测）
-    logger.info("步骤 1/5: 提取 Git Diff 物理事实")
+    logger.info("步骤 1/7: 提取 Git Diff 物理事实")
     diff_result = analyze_commit(project_root)
 
     # ② 读取两次 commit 之间的全部用户需求（由 IDE Skill 写入的 prompt 日志）
-    logger.info("步骤 2/5: 读取用户需求 prompts")
+    logger.info("步骤 2/7: 读取用户需求 prompts")
     prompts = get_pending_prompts(project_root)
     logger.info("读取到 %d 条用户需求", len(prompts))
 
     # ③ 加载内建审计规则库
-    logger.info("步骤 3/5: 加载审计规则")
+    logger.info("步骤 3/7: 加载审计规则")
     rules = load_default_rules()
 
     # ④ 执行 9 大维度架构信号扫描
-    logger.info("步骤 4/5: 执行架构变更信号扫描")
+    logger.info("步骤 4/7: 执行架构变更信号扫描")
     signals = detect_signals(diff_result, rules)
     signal_summary = summarize_signals(signals)
 
-    # ⑤ 归档 pending prompts（以 commit hash 命名归档，并重置待处理队列）
+    # ⑤ 图谱拓扑变动分析（阶段二新增）
+    # 如果 codegraph 目录下存在 graph.json，读取并分析拓扑变化
+    # 不存在时优雅降级为空结果，不阻塞审计流程
+    logger.info("步骤 5/7: 图谱拓扑变动分析")
+    graph_analysis_dict: dict = {}
+    graph_file = get_audit_root(project_root) / "codegraph" / "graph.json"
+    if graph_file.exists():
+        try:
+            import json
+            current_graph = json.loads(graph_file.read_text(encoding="utf-8"))
+            graph_result = analyze_graph_changes(diff_result, current_graph)
+            graph_analysis_dict = graph_result.model_dump()
+            logger.info(
+                "图谱分析完成: 拓扑变更=%s, 跨模块违规=%d, 循环依赖=%d",
+                graph_result.has_topology_changes,
+                len(graph_result.cross_module_violations),
+                len(graph_result.cycles_detected),
+            )
+        except Exception as e:
+            logger.warning("图谱分析异常，跳过: %s", e)
+    else:
+        logger.info("未找到 graph.json，跳过图谱分析")
+
+    # ⑥ 记账出入核验（阶段二新增）
+    # 比对 Diff 实际改动与 ledger.jsonl 记账本声明的一致性
+    # ledger.jsonl 不存在时优雅降级
+    logger.info("步骤 6/7: 记账出入核验")
+    ledger_verification_dict: dict = {}
+    ledger_file = get_audit_root(project_root) / "collab" / "ledger.jsonl"
+    if ledger_file.exists():
+        try:
+            import json
+            ledger_events = []
+            for line in ledger_file.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    ledger_events.append(json.loads(line))
+            ledger_result = verify_ledger_consistency(diff_result, ledger_events)
+            ledger_verification_dict = ledger_result.model_dump()
+            logger.info(
+                "记账核验完成: 一致=%s, 评分=%.2f, 未声明=%d, 虚报=%d",
+                ledger_result.is_consistent,
+                ledger_result.consistency_score,
+                len(ledger_result.undeclared_files),
+                len(ledger_result.phantom_files),
+            )
+        except Exception as e:
+            logger.warning("记账核验异常，跳过: %s", e)
+    else:
+        logger.info("未找到 ledger.jsonl，跳过记账核验")
+
+    # ⑦ 归档 pending prompts（以 commit hash 命名归档，并重置待处理队列）
     # 原因：确保每次 commit 对应的 prompts 都有据可查，且不会泄漏到下一个 commit 周期
-    logger.info("步骤 5/5: 归档 prompts")
+    logger.info("步骤 7/7: 归档 prompts")
     archive_and_clear(project_root, diff_result.commit_hash)
 
     # 组装客观事实数据包（严格保持数据不可篡改性与客观性）
@@ -126,6 +193,8 @@ def run_audit(project_root: str | Path) -> AuditResult:
         changed_files=[f.to_dict() for f in diff_result.files],
         architecture_signals=[s.model_dump() for s in signals],
         signal_summary=signal_summary,
+        graph_analysis=graph_analysis_dict,
+        ledger_verification=ledger_verification_dict,
     )
 
     # 持久化保存审计结果供后续 MCP 工具快速读取及历史追踪
