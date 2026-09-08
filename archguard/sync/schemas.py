@@ -1,17 +1,21 @@
 from typing import List, Dict, Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel as PydanticBaseModel, Field
+
+class BaseModel(PydanticBaseModel):
+    """保留旧协议扩展字段，避免迁移或交接时静默丢失历史信息。"""
+    model_config = {'extra': 'allow'}
 
 class DiagnosticRecord(BaseModel):
     """诊断记录，用于追踪问题排查与解决过程"""
     status: Literal['unresolved', 'corrected']
-    symptom: str
+    symptom: str = ''
     current_best_conclusion: str
-    confidence: Literal['low', 'medium', 'high']
-    evidence: List[str]
-    ruled_out: List[str]
-    open_hypotheses: List[str]
+    confidence: Literal['low', 'medium', 'high'] = 'medium'
+    evidence: List[str | Dict]
+    ruled_out: List[str | Dict] = Field(default_factory=list)
+    open_hypotheses: List[str | Dict] = Field(default_factory=list)
     next_actions: List[str]
-    do_not_repeat: List[str]
+    do_not_repeat: List[str] = Field(default_factory=list)
     handoff_prompt: str
     supersedes_version: Optional[str] = None
     invalidated_assumption: Optional[str] = None
@@ -135,14 +139,14 @@ class LedgerEvent(BaseModel):
     project: str
     source_ai_ide: str
     event_type: Literal[
-        'analysis_handoff', 'planning', 'code_update', 'doc_update', 
-        'test_update', 'config_update', 'migration_update', 'deployment_update', 
+        'analysis_handoff', 'planning', 'code_update', 'doc_update',
+        'test_update', 'config_update', 'migration_update', 'deployment_update',
         'bugfix', 'handoff', 'risk_notice', 'conflict_notice'
     ]
     feature_scope: Optional[str] = None
     git: GitInfo
     scope: ScopeInfo
-    graph_impact: GraphImpact
+    graph_impact: GraphImpact = Field(default_factory=GraphImpact)
     context: ContextInfo
     verification: VerificationInfo
     summary: str

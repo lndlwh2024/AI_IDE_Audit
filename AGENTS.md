@@ -36,11 +36,15 @@ IDE_Audit 采用"同一 AI IDE，双窗口分离审计 + 双系统融合"架构�
 | 产品设计文档（V2.0 终局融合版） | `docs/PRODUCT_DESIGN_V2.0.md` | 完整的产品设计、技术架构、审计流程、四阶段计划（含 dual-agent-sync 整合） |
 | 产品设计文档（V1.0 历史归档） | `docs/PRODUCT_DESIGN_V1.0.md` | V1.0 历史版本，保留不改 |
 | 本文件 | `AGENTS.md` | 项目协作规则 |
+| 当前交接与审计 | `docs/HANDOVER.md` | 当前实现、修复前基线及未完成验收项 |
+| 开发执行计划 | `docs/DEVELOPMENT_PLAN.md` | 已确认方案、实施进度和后续验收门 |
+| 原 Skill 能力对照 | `docs/DUAL_SYNC_PARITY.md` | 完整继承目标的证据与剩余差距 |
 
 ## 3.1 核心架构分工边界
 
 - `archguard/sync/`：负责数据的**写入与维护**（由 A 窗口 MCP 工具调用），继承 dual-agent-sync 100% 功能
 - `archguard/core/`：负责数据的**只读分析与扫描**（由审计引擎调用），不修改任何文件
+- `archguard/runtime.py` / `archguard/storage.py`：负责封存提交证据及持久化结果，不将写入放回只读 core；完整继承是验收目标，不以模块存在宣称已完成。
 
 ## 4. 开发约定
 
@@ -51,11 +55,13 @@ IDE_Audit 采用"同一 AI IDE，双窗口分离审计 + 双系统融合"架构�
 
 ## 5. 开发阶段（4 个阶段）
 
+2026-09-09 当前实施版为 `0.3.0a1`：79 项测试及合成项目真实 Codex 基础闭环通过，仍有完整融合与扩展场景待验收。以下阶段划分保留作路线图，旧版本的完成标记不能代替当前 HANDOVER 的证据。
+
 ### 阶段一：核心物理审计引擎（✅ 已完成，v0.1.0）
 - `archguard/core/` — 审计主引擎、Diff 分析、架构规则检测、需求存储、报告生成（27个测试全通，已发布GitHub）
 - `archguard/rules/` — 固定审计规则库（9大检测维度）
 
-### 阶段二：CodeGraph 架构图谱与记账出入核验（当前阶段）
+### 阶段二：CodeGraph 架构图谱与记账出入核验
 - `archguard/core/graph_analyzer.py` — 代码图谱拓扑解析与依赖变动分析
 - `archguard/core/ledger_analyzer.py` — 记账本与 Diff 出入核验
 - `archguard/core/engine.py` — 升级主引擎编排客观分析包

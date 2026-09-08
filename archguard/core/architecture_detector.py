@@ -142,9 +142,7 @@ def _match_rule(
 
     匹配逻辑（满足任一即命中）：
     1. file_patterns: 文件路径 glob 匹配
-    2. content_patterns: 此处仅根据文件路径进行正则检查
-       （完整的代码内容正则匹配需要在 MCP 层获取文件内容后执行，
-        本阶段基于路径和已知模式做基础检测）
+    2. content_patterns: 对真实 patch 中的新增和删除内容执行正则匹配。
     """
     # 文件路径 glob 匹配
     for pattern in rule.file_patterns:
@@ -158,18 +156,26 @@ def _match_rule(
                 matched_pattern=f"file: {pattern}",
             )
 
-    # 文件路径正则匹配（针对部分 content_patterns 可从路径中推断的场景）
+    changed_lines = []
+    in_hunk = False
+    for line in file_change.diff_content.splitlines():
+        if line.startswith('@@ '):
+            in_hunk = True
+        elif in_hunk and line.startswith(('+', '-')):
+            changed_lines.append(line[1:])
+    changed_text = '\n'.join(changed_lines)
+    # 内容正则匹配仅使用变动行，避免把未改动上下文作为变化。
     # 异常防御：外部规则正则可能不合法，捕获 re.error 防止单条非法规则中断整个审计流程
     for pattern in rule.content_patterns:
         try:
-            if re.search(pattern, file_change.path):
+            if re.search(pattern, changed_text, re.MULTILINE):
                 return ArchitectureSignal(
                     rule_id=rule.id,
                     dimension=rule.dimension,
                     severity=rule.severity,
                     file_path=file_change.path,
                     description=rule.description,
-                    matched_pattern=f"content(path): {pattern}",
+                    matched_pattern=f"content(diff): {pattern}",
                 )
         except re.error:
             logger.warning("正则表达式无效，跳过: %s", pattern)

@@ -1,141 +1,86 @@
-import logging
-import ast
-from pathlib import Path
+"""维护工作态图谱；先落可恢复记录，再原子提交图谱与变更日志。"""
+import hashlib
 from datetime import datetime, timezone
-from typing import Dict, List
-from .schemas import CodeGraph, GraphMeta, GraphNode, GraphEdge, GraphChangelogEntry, GraphDiff
+from pathlib import Path
+from archguard.core.codegraph import build_graph
+from archguard.core.graph_analyzer import detect_topology_changes
+from archguard.storage import metadata_path, atomic_json, atomic_text, read_json, transaction
+from .schemas import CodeGraph, GraphMeta, GraphDiff
 
-logger = logging.getLogger(__name__)
 
 class GraphManager:
-    """
-    基于 Python AST 进行静态分析并提取引用关系的全局代码图谱维护工具。
-    同时负责记录所有的图谱变动日志，形成可追溯的链路。
-    """
-    def __init__(self, project_root: Path):
-        self.project_root = Path(project_root)
-        self.graph_dir = self.project_root / '.ide_audit' / 'codegraph'
-        self.graph_file = self.graph_dir / 'graph.json'
+    def __init__(self, project_root):
+        self.project_root = Path(project_root).resolve()
+        self.graph_file = metadata_path(project_root, 'codegraph', 'graph.json')
+        self.graph_dir = self.graph_file.parent
         self.changelog_file = self.graph_dir / 'graph.changelog.jsonl'
-        self.graph_dir.mkdir(parents=True, exist_ok=True)
-        
-    def read_graph(self) -> CodeGraph:
-        """加载当前图谱"""
-        if not self.graph_file.exists():
-            return CodeGraph(
-                meta=GraphMeta(version="v0000", last_updated="", updated_by="system", total_nodes=0, total_edges=0),
-                modules=[], nodes={}, edges=[]
-            )
-        try:
-            return CodeGraph.model_validate_json(self.graph_file.read_text(encoding='utf-8'))
-        except Exception as e:
-            logger.error(f"读取图谱时发生错误: {e}")
-            raise
+        self.journal = self.graph_dir / 'pending-write.json'
 
-    def init_graph(self, ide_id: str) -> CodeGraph:
-        """全量初始化扫描，解析项目下全部 Python 文件的 imports 关系"""
-        nodes: Dict[str, GraphNode] = {}
-        edges: List[GraphEdge] = []
-        modules: List[str] = []
-        
-        # 扫描规则：忽略隐藏目录和常规无关目录
-        for py_file in self.project_root.rglob("*.py"):
-            if ".ide_audit" in py_file.parts or "venv" in py_file.parts or ".git" in py_file.parts:
-                continue
-                
-            module_name = py_file.relative_to(self.project_root).as_posix()
-            modules.append(module_name)
-            
-            try:
-                content = py_file.read_text(encoding='utf-8')
-                tree = ast.parse(content)
-                imports = []
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Import):
-                        for n in node.names:
-                            imports.append(n.name)
-                    elif isinstance(node, ast.ImportFrom) and node.module:
-                        imports.append(node.module)
-                
-                nodes[module_name] = GraphNode(
-                    module=module_name,
-                    purpose="auto-analyzed module",
-                    imports=imports
-                )
-                
-                # 构建边关系
-                for imp in imports:
-                    edges.append(GraphEdge(from_=module_name, to=imp, type="imports"))
-            except SyntaxError as se:
-                logger.warning(f"语法错误，跳过分析 {py_file}: {se}")
-            except Exception as e:
-                logger.warning(f"无法解析 {py_file} 依赖: {e}")
-                
-        meta = GraphMeta(
-            version="v0001",
-            last_updated=datetime.now(timezone.utc).isoformat(),
-            updated_by=ide_id,
-            total_nodes=len(nodes),
-            total_edges=len(edges)
-        )
-        
-        graph = CodeGraph(meta=meta, modules=modules, nodes=nodes, edges=edges)
-        self.graph_file.write_text(graph.model_dump_json(by_alias=True, indent=2), encoding='utf-8')
-        
-        # 追加变更记录
-        diff = GraphDiff(
-            nodes_added=list(nodes.keys()), 
-            nodes_removed=[], 
-            edges_added=[{"from": e.from_, "to": e.to, "type": e.type} for e in edges], 
-            edges_removed=[]
-        )
-        self.append_changelog(GraphChangelogEntry(
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            source_ai_ide=ide_id,
-            action="init",
-            trigger_version="v0001",
-            summary="Initial graph scan via AST",
-            diff=diff
-        ))
-        return graph
+    def read_graph(self):
+        data = read_json(self.graph_file)
+        return CodeGraph.model_validate(data) if data else CodeGraph(
+            meta=GraphMeta(version='v0000', last_updated='', updated_by='system', total_nodes=0, total_edges=0),
+            modules=[], nodes={}, edges=[])
 
-    def get_graph_diff(self, old_graph: CodeGraph, new_graph: CodeGraph) -> GraphDiff:
-        """比对新旧图谱状态，生成变更统计"""
-        old_nodes = set(old_graph.nodes.keys())
-        new_nodes = set(new_graph.nodes.keys())
-        
-        old_edges = {(e.from_, e.to, e.type) for e in old_graph.edges}
-        new_edges = {(e.from_, e.to, e.type) for e in new_graph.edges}
-        
-        return GraphDiff(
-            nodes_added=list(new_nodes - old_nodes),
-            nodes_removed=list(old_nodes - new_nodes),
-            edges_added=[{"from": e[0], "to": e[1], "type": e[2]} for e in new_edges - old_edges],
-            edges_removed=[{"from": e[0], "to": e[1], "type": e[2]} for e in old_edges - new_edges]
-        )
+    def _recover(self):
+        journal = read_json(self.journal)
+        if journal:
+            atomic_json(self.graph_file, journal['graph'])
+            atomic_text(self.changelog_file, journal['changelog'])
+            self.journal.unlink()
 
-    def update_graph(self, graph: CodeGraph, ide_id: str, trigger_version: str):
-        """应用增量更改，同时更新元数据并写入 Changelog，调用者需保证获得排他锁"""
-        old_graph = self.read_graph()
-        diff = self.get_graph_diff(old_graph, graph)
-        
+    def sync(self, ide_id, trigger_version=None):
+        with transaction(self.project_root, 'graph'):
+            self._recover()
+            sources = {}
+            ignored = {'.git', '.ide_audit', '.ai-sync', '.pytest_cache', '.venv', 'venv', 'env', 'node_modules', '__pycache__', 'build', 'dist'}
+            # 仅相对路径参与排除判断，祖先目录名不影响用户工程。
+            import os
+            for directory, dirs, files in os.walk(self.project_root):
+                dirs[:] = [d for d in dirs if d not in ignored and not (Path(directory) / d).is_symlink()]
+                for name in files:
+                    path = Path(directory) / name
+                    if not path.is_symlink():
+                        try:
+                            content = path.read_text(encoding='utf-8-sig')
+                        except UnicodeDecodeError:
+                            if path.suffix == '.py':
+                                raise ValueError(f'Python 文件编码不受支持: {path}')
+                            content = ''
+                        sources[path.relative_to(self.project_root).as_posix()] = content
+            old = self.read_graph()
+            graph = build_graph(sources, old.model_dump(by_alias=True))
+            if graph['diagnostics']:
+                raise ValueError(f"图谱解析不完整: {graph['diagnostics']}")
+            new = CodeGraph.model_validate(graph)
+            return self._commit(old, new, ide_id, trigger_version or old.meta.version)
+
+    def init_graph(self, ide_id):
+        return self.sync(ide_id)
+
+    def get_graph_diff(self, old_graph, new_graph):
+        return GraphDiff(**detect_topology_changes(old_graph.model_dump(by_alias=True), new_graph.model_dump(by_alias=True)))
+
+    def _commit(self, old, graph, ide_id, trigger_version):
+        import json
+        diff = self.get_graph_diff(old, graph)
+        graph.meta.version = f'v{int(old.meta.version[1:]) + 1:04d}'
         graph.meta.last_updated = datetime.now(timezone.utc).isoformat()
         graph.meta.updated_by = ide_id
         graph.meta.total_nodes = len(graph.nodes)
         graph.meta.total_edges = len(graph.edges)
-        
-        self.graph_file.write_text(graph.model_dump_json(by_alias=True, indent=2), encoding='utf-8')
-        
-        self.append_changelog(GraphChangelogEntry(
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            source_ai_ide=ide_id,
-            action="update",
-            trigger_version=trigger_version,
-            summary=f"Incremental graph update driven by {trigger_version}",
-            diff=diff
-        ))
+        entry = {'timestamp': graph.meta.last_updated, 'source_ai_ide': ide_id,
+                 'action': 'init' if old.meta.version == 'v0000' else 'update',
+                 'trigger_version': trigger_version, 'summary': '图谱扫描及增量更新', 'diff': diff.model_dump()}
+        content = self.changelog_file.read_text(encoding='utf-8') if self.changelog_file.exists() else ''
+        journal = {'graph': graph.model_dump(by_alias=True), 'changelog': content + json.dumps(entry, ensure_ascii=False) + '\n'}
+        atomic_json(self.journal, journal)
+        self._recover()
+        return graph
 
-    def append_changelog(self, entry: GraphChangelogEntry):
-        """追加记录至图谱变更日志文件"""
-        with open(self.changelog_file, 'a', encoding='utf-8') as f:
-            f.write(entry.model_dump_json(by_alias=True) + "\n")
+    def update_graph(self, graph, ide_id, trigger_version):
+        if not isinstance(trigger_version, str):
+            raise ValueError('trigger_version 必须为字符串')
+        with transaction(self.project_root, 'graph'):
+            self._recover()
+            return self._commit(self.read_graph(), graph.model_copy(deep=True), ide_id, trigger_version)

@@ -9,8 +9,8 @@ from pathlib import Path
 import git
 import pytest
 
-from archguard.core.engine import run_audit
-from archguard.core.prompt_store import record_prompt
+from archguard.runtime import audit_project as run_audit
+from archguard.sync.prompts import record_prompt
 
 
 @pytest.fixture
@@ -92,7 +92,7 @@ class TestRunAudit:
 
     def test_pending_cleared_after_audit(self, project_with_commit: Path) -> None:
         """审计完成后 pending prompts 应被清空，避免跨周期污染"""
-        from archguard.core.prompt_store import get_pending_prompts
+        from archguard.sync.prompts import get_pending_prompts
 
         run_audit(project_with_commit)
         pending = get_pending_prompts(project_with_commit)

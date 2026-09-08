@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ide-audit"
-version = "0.2.0"
+version = "0.3.0a1"
 description = "IDE_Audit — AI IDE 架构审计插件，通过 git diff + 用户需求自动检测超出范围的架构变更"
 readme = "README.md"
 license = {text = "MIT"}
@@ -22,7 +22,8 @@ dependencies = [
     "jinja2>=3.1.0",
     "click>=8.0.0",
     "httpx>=0.24.0",
-    "mcp>=1.0.0",
+    "mcp>=2.2.0,<2.3",
+    "jsonschema>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +34,11 @@ dev = [
 
 [project.scripts]
 archguard = "archguard.cli.main:cli"
+ide-audit-mcp = "archguard.mcp.server:run_mcp_server"
+
+[tool.setuptools.package-data]
+"archguard.rules" = ["*.yaml"]
+"archguard" = ["templates/*.md", "templates/*.j2"]
 
 [tool.setuptools.packages.find]
 where = ["."]

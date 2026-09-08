@@ -1,0 +1,13 @@
+{
+  "source_commit": "45e4463722263584ee7e4eb4b94fcdd299aa9f3f",
+  "source_has_uncommitted_changes": true,
+  "source_url": "https://github.com/lndlwh2024/dual-agent-sync",
+  "captured_files_sha256": {
+    "templates/.trae/skills/dual-agent-sync/SKILL.md": "222d56825732446b008dd18e3ba16fd9772c18907ba86e016c2235e25a171087",
+    ".trae/skills/dual-agent-sync/SKILL.md": "db96cd5f111243070af27f655b7beb04cb705bb02d157e47cfa323664056a0cf",
+    "MANUAL.md": "64671f636aad1bd597cb6815233475a152dcdbf47a0440381887b231e0852d79",
+    "docs/PROTOCOL.md": "8d492f8c2c0aff5270cf51888bcae1b4f4bd0f1bbbd7689ba80a513079d94c15",
+    "docs/WORKFLOW.md": "2f6c7692936c99537ecf9584874bb0d04545b7968cb397caf13a9fca8af47248",
+    "docs/EVENT_SCHEMA.md": "ad7d25e2086153e80d81fb2cdf59a7027ae327d54ebc4fc018f2902f3dccbf75"
+  }
+}

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from archguard.core.prompt_store import (
+from archguard.sync.prompts import (
     archive_and_clear,
     get_pending_prompts,
     record_prompt,

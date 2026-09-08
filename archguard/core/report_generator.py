@@ -12,8 +12,8 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 logger = logging.getLogger(__name__)
 
-# 模板目录路径：相对于当前模块定位到项目根目录的 templates 目录
-_TEMPLATES_DIR = Path(__file__).parent.parent.parent / "templates"
+# 模板随 Python 包发布，不依赖源码工作目录。
+_TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 
 
 def generate_report(audit_result_dict: dict) -> str:
@@ -57,6 +57,10 @@ def _fallback_report(data: dict) -> str:
     lines = []
     lines.append("# IDE_Audit 客观事实报告")
     lines.append("")
+
+    lines.append(f"- **证据状态**: {data.get('analysis_status', 'unknown')}")
+    for diagnostic in data.get('diagnostics', []):
+        lines.append(f"- 证据诊断: {diagnostic}")
     lines.append(f"- **审计时间**: {data.get('timestamp', 'N/A')}")
     lines.append(f"- **Commit**: `{data.get('commit_hash', 'N/A')[:12]}`")
     lines.append(f"- **Commit Message**: {data.get('commit_message', 'N/A')}")
@@ -115,6 +119,50 @@ def _fallback_report(data: dict) -> str:
     else:
         lines.append("_未检测到架构变更信号_")
     lines.append("")
+
+    # 图谱拓扑变动
+    graph = data.get("graph_analysis")
+    if graph:
+        lines.append("## 图谱拓扑变动")
+        lines.append(f"- 是否有变化: {graph.get('has_topology_changes', False)}")
+        lines.append(f"- 新增节点: {len(graph.get('nodes_added', []))}")
+        lines.append(f"- 删除节点: {len(graph.get('nodes_removed', []))}")
+        lines.append(f"- 新增边: {len(graph.get('edges_added', []))}")
+        lines.append(f"- 删除边: {len(graph.get('edges_removed', []))}")
+        violations = graph.get("cross_module_violations", [])
+        lines.append(f"- 跨模块违规: {len(violations)}")
+        lines.append(f"- 循环依赖: {len(graph.get('cycles_detected', []))}")
+
+        if violations:
+            lines.append("")
+            lines.append("| 源文件 | 目标文件 | 源模块 | 目标模块 | 边类型 |")
+            lines.append("|:---|:---|:---|:---|:---|")
+            for v in violations:
+                lines.append(f"| {v.get('from_file', '')} | {v.get('to_file', '')} | {v.get('from_module', '')} | {v.get('to_module', '')} | {v.get('edge_type', '')} |")
+        lines.append("")
+
+    # 记账出入核验
+    ledger = data.get("ledger_verification")
+    if ledger:
+        lines.append("## 记账出入核验")
+        lines.append(f"- 是否一致: {ledger.get('is_consistent', False)}")
+        score = ledger.get('consistency_score', 0.0) * 100
+        lines.append(f"- 一致性评分: {score:.1f}%")
+        lines.append(f"- 实际修改文件: {ledger.get('total_diff_files', 0)}")
+        lines.append(f"- 声明修改文件: {ledger.get('total_ledger_files', 0)}")
+
+        undeclared = ledger.get("undeclared_files", [])
+        if undeclared:
+            lines.append("### 未声明修改（瞒报）")
+            for f in undeclared:
+                lines.append(f"- `{f}`")
+
+        phantom = ledger.get("phantom_files", [])
+        if phantom:
+            lines.append("### 虚报修改")
+            for f in phantom:
+                lines.append(f"- `{f}`")
+        lines.append("")
 
     # 尾部法律与裁决权声明
     lines.append("---")

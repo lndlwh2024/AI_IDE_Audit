@@ -1,248 +1,64 @@
-"""审计主引擎 — 编排物理事实收集、架构信号扫描、图谱分析与记账核验
-
-核心编排流程：
-    1. 调用 diff_analyzer 提取最后一次 commit 的物理变更事实
-    2. 调用 prompt_store 读取两次 commit 之间的全部用户需求
-    3. 调用 rules.loader 加载审计规则
-    4. 调用 architecture_detector 执行 9 大维度规则扫描
-    5. 调用 graph_analyzer 执行图谱拓扑变动分析（阶段二新增）
-    6. 调用 ledger_analyzer 执行记账出入核验（阶段二新增）
-    7. 归档 pending prompts
-    8. 组装客观事实数据包并持久化保存
-
-本引擎不做任何语义判断，只产出客观事实供 B 窗口 LLM 裁决。
-"""
-
-import json
-import logging
+"""只读事实引擎。输入固定提交及封存证据；不建目录、不归档、不保存结果。"""
 from datetime import datetime, timezone
-from pathlib import Path
-
+import git
 from pydantic import BaseModel, Field
-
-from archguard.config.settings import (
-    ensure_directories,
-    get_audit_root,
-    get_latest_result_file,
-    get_results_history_dir,
-)
-from archguard.core.architecture_detector import detect_signals, summarize_signals
 from archguard.core.diff_analyzer import analyze_commit
+from archguard.core.architecture_detector import detect_signals, summarize_signals
 from archguard.core.graph_analyzer import analyze_graph_changes
+from archguard.core.codegraph import graph_at_commit
 from archguard.core.ledger_analyzer import verify_ledger_consistency
-from archguard.core.prompt_store import archive_and_clear, get_pending_prompts
 from archguard.rules.loader import load_default_rules
-
-logger = logging.getLogger(__name__)
 
 
 class AuditResult(BaseModel):
-    """客观事实审计结果数据包
-
-    此结构由引擎产出，通过 MCP 接口（audit_changes 工具）
-    提供给 B 窗口的审计 LLM。包含纯粹的物理事实与用户需求原文，
-    不含任何合理性判断或通过/不通过结论。
-    """
-    # 时间与版本：记录审计发生的绝对时间与关联的 Git Commit 信息
-    timestamp: str = Field(description="审计执行时间（ISO 8601）")
-    commit_hash: str = Field(description="本次审计的 commit hash")
-    commit_message: str = Field(description="commit message")
-
-    # 用户需求：记录两次 commit 之间的全部 prompt，为后续 LLM 语义裁决提供需求证据链
-    prompts: list[dict] = Field(
-        default_factory=list,
-        description="两次 commit 之间的全部用户需求原文与时间戳",
-    )
-
-    # Diff 摘要与文件明细：纯客观的代码改动物理指标
-    diff_summary: dict = Field(
-        default_factory=dict,
-        description="变更统计摘要（文件总数、增删行数）",
-    )
-    changed_files: list[dict] = Field(
-        default_factory=list,
-        description="每个变更文件的详情（路径、类型、增删行数）",
-    )
-
-    # 架构变更客观信号与统计：基于规则引擎匹配出的客观事实信号
-    architecture_signals: list[dict] = Field(
-        default_factory=list,
-        description="命中的架构变更客观信号列表",
-    )
-    signal_summary: dict = Field(
-        default_factory=dict,
-        description="架构信号按维度和严重级别的统计汇总",
-    )
-
-    # 图谱拓扑变动分析：基于 codegraph 的依赖变化检测（阶段二新增）
-    graph_analysis: dict = Field(
-        default_factory=dict,
-        description="图谱拓扑变动分析结果（节点/边增删、跨模块违规、循环依赖）",
-    )
-
-    # 记账一致性核验：Diff 实际改动与记账本声明的出入比对（阶段二新增）
-    ledger_verification: dict = Field(
-        default_factory=dict,
-        description="记账出入核验结果（未声明文件、虚报文件、一致性评分）",
-    )
+    schema_version: int = 1
+    audit_id: str
+    timestamp: str
+    commit_hash: str
+    base_commit: str | None = None
+    commit_message: str
+    prompts: list[dict] = Field(default_factory=list)
+    diff_summary: dict = Field(default_factory=dict)
+    changed_files: list[dict] = Field(default_factory=list)
+    architecture_signals: list[dict] = Field(default_factory=list)
+    signal_summary: dict = Field(default_factory=dict)
+    graph_analysis: dict = Field(default_factory=dict)
+    ledger_verification: dict = Field(default_factory=dict)
+    graph_before: dict = Field(default_factory=dict)
+    graph_after: dict = Field(default_factory=dict)
+    declared_graph: dict = Field(default_factory=dict)
+    declared_graph_before: dict = Field(default_factory=dict)
+    ledger_events: list[dict] = Field(default_factory=list)
+    analysis_status: str = 'complete'
+    diagnostics: list[dict] = Field(default_factory=list)
+    input_hash: str = ''
 
 
-def run_audit(project_root: str | Path) -> AuditResult:
-    """执行完整的审计分析流程
-
-    编排所有核心模块，产出客观事实数据包。
-    审计范围严格限定为最后一次 commit（HEAD~1..HEAD）。
-
-    Args:
-        project_root: 用户项目根目录（必须是有效的 Git 仓库）
-
-    Returns:
-        AuditResult 客观事实数据包
-    """
-    # 路径安全性防御：统一转为 Path 对象并初始化所需审计元数据目录
-    project_root = Path(project_root)
-    ensure_directories(project_root)
-
-    logger.info("===== IDE_Audit 审计引擎启动 =====")
-    logger.info("项目路径: %s", project_root)
-
-    # ① 提取最后一次 commit 的物理变更事实（仅物理层面，不作推测）
-    logger.info("步骤 1/7: 提取 Git Diff 物理事实")
-    diff_result = analyze_commit(project_root)
-
-    # ② 读取两次 commit 之间的全部用户需求（由 IDE Skill 写入的 prompt 日志）
-    logger.info("步骤 2/7: 读取用户需求 prompts")
-    prompts = get_pending_prompts(project_root)
-    logger.info("读取到 %d 条用户需求", len(prompts))
-
-    # ③ 加载内建审计规则库
-    logger.info("步骤 3/7: 加载审计规则")
-    rules = load_default_rules()
-
-    # ④ 执行 9 大维度架构信号扫描
-    logger.info("步骤 4/7: 执行架构变更信号扫描")
-    signals = detect_signals(diff_result, rules)
-    signal_summary = summarize_signals(signals)
-
-    # ⑤ 图谱拓扑变动分析（阶段二新增）
-    # 如果 codegraph 目录下存在 graph.json，读取并分析拓扑变化
-    # 不存在时优雅降级为空结果，不阻塞审计流程
-    logger.info("步骤 5/7: 图谱拓扑变动分析")
-    graph_analysis_dict: dict = {}
-    graph_file = get_audit_root(project_root) / "codegraph" / "graph.json"
-    if graph_file.exists():
-        try:
-            import json
-            current_graph = json.loads(graph_file.read_text(encoding="utf-8"))
-            graph_result = analyze_graph_changes(diff_result, current_graph)
-            graph_analysis_dict = graph_result.model_dump()
-            logger.info(
-                "图谱分析完成: 拓扑变更=%s, 跨模块违规=%d, 循环依赖=%d",
-                graph_result.has_topology_changes,
-                len(graph_result.cross_module_violations),
-                len(graph_result.cycles_detected),
-            )
-        except Exception as e:
-            logger.warning("图谱分析异常，跳过: %s", e)
-    else:
-        logger.info("未找到 graph.json，跳过图谱分析")
-
-    # ⑥ 记账出入核验（阶段二新增）
-    # 比对 Diff 实际改动与 ledger.jsonl 记账本声明的一致性
-    # ledger.jsonl 不存在时优雅降级
-    logger.info("步骤 6/7: 记账出入核验")
-    ledger_verification_dict: dict = {}
-    ledger_file = get_audit_root(project_root) / "collab" / "ledger.jsonl"
-    if ledger_file.exists():
-        try:
-            import json
-            ledger_events = []
-            for line in ledger_file.read_text(encoding="utf-8").splitlines():
-                if line.strip():
-                    ledger_events.append(json.loads(line))
-            ledger_result = verify_ledger_consistency(diff_result, ledger_events)
-            ledger_verification_dict = ledger_result.model_dump()
-            logger.info(
-                "记账核验完成: 一致=%s, 评分=%.2f, 未声明=%d, 虚报=%d",
-                ledger_result.is_consistent,
-                ledger_result.consistency_score,
-                len(ledger_result.undeclared_files),
-                len(ledger_result.phantom_files),
-            )
-        except Exception as e:
-            logger.warning("记账核验异常，跳过: %s", e)
-    else:
-        logger.info("未找到 ledger.jsonl，跳过记账核验")
-
-    # ⑦ 归档 pending prompts（以 commit hash 命名归档，并重置待处理队列）
-    # 原因：确保每次 commit 对应的 prompts 都有据可查，且不会泄漏到下一个 commit 周期
-    logger.info("步骤 7/7: 归档 prompts")
-    archive_and_clear(project_root, diff_result.commit_hash)
-
-    # 组装客观事实数据包（严格保持数据不可篡改性与客观性）
-    audit_result = AuditResult(
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        commit_hash=diff_result.commit_hash,
-        commit_message=diff_result.commit_message,
-        prompts=prompts,
-        diff_summary={
-            "total_files_changed": diff_result.total_files_changed,
-            "total_additions": diff_result.total_additions,
-            "total_deletions": diff_result.total_deletions,
-        },
-        changed_files=[f.to_dict() for f in diff_result.files],
-        architecture_signals=[s.model_dump() for s in signals],
-        signal_summary=signal_summary,
-        graph_analysis=graph_analysis_dict,
-        ledger_verification=ledger_verification_dict,
-    )
-
-    # 持久化保存审计结果供后续 MCP 工具快速读取及历史追踪
-    _save_result(project_root, audit_result)
-
-    logger.info("===== 审计引擎完成 =====")
-    logger.info(
-        "结果: %d 个文件变更, %d 个架构信号（HIGH: %d, MEDIUM: %d）",
-        diff_result.total_files_changed,
-        signal_summary["total"],
-        signal_summary["by_severity"].get("HIGH", 0),
-        signal_summary["by_severity"].get("MEDIUM", 0),
-    )
-
-    return audit_result
-
-
-def _save_result(project_root: Path, result: AuditResult) -> None:
-    """将审计结果持久化保存
-
-    保存两份：
-    1. latest.json：最近一次结果（覆盖写入，方便 MCP 工具低延迟读取）
-    2. history/{timestamp}_{hash}.json：历史归档（便于版本溯源与复盘）
-    """
-    ensure_directories(project_root)
-    result_dict = result.model_dump()
-
-    # 保存 latest.json
-    latest_file = get_latest_result_file(project_root)
-    _write_json(latest_file, result_dict)
-    logger.info("结果已保存到: %s", latest_file)
-
-    # 保存历史归档
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-    short_hash = result.commit_hash[:7]
-    history_file = (
-        get_results_history_dir(project_root)
-        / f"{timestamp}_{short_hash}.json"
-    )
-    _write_json(history_file, result_dict)
-    logger.info("历史归档已保存到: %s", history_file)
-
-
-def _write_json(path: Path, data: dict) -> None:
-    """安全写入 JSON 文件
-
-    原因：保证父级目录在写入前必然存在，指定 UTF-8 编码避免多语言需求内容乱码
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+def run_audit(project_root, commit_hash=None, snapshot=None):
+    facts = analyze_commit(project_root, commit_hash)
+    snapshot = snapshot or {}
+    diagnostics = list(snapshot.get('diagnostics', []))
+    if not snapshot.get('prompts'):
+        diagnostics.append({'component': 'prompts', 'error': '缺少本提交已绑定需求'})
+    if not snapshot.get('ledger_events'):
+        diagnostics.append({'component': 'ledger', 'error': '缺少本提交的记账申报'})
+    repo = git.Repo(project_root)
+    before = graph_at_commit(repo, facts.base_commit)
+    after = graph_at_commit(repo, facts.commit_hash)
+    for graph in (before, after):
+        diagnostics.extend(dict(d, component='graph') for d in graph.get('diagnostics', []))
+    signals = detect_signals(facts, load_default_rules())
+    ledger = verify_ledger_consistency(facts, snapshot.get('ledger_events', []))
+    return AuditResult(audit_id=facts.commit_hash, timestamp=datetime.now(timezone.utc).isoformat(),
+        commit_hash=facts.commit_hash, base_commit=facts.base_commit, commit_message=facts.commit_message,
+        prompts=snapshot.get('prompts', []), ledger_events=snapshot.get('ledger_events', []),
+        changed_files=[f.to_dict() for f in facts.files],
+        diff_summary={'total_files_changed': facts.total_files_changed, 'total_additions': facts.total_additions,
+                      'total_deletions': facts.total_deletions},
+        architecture_signals=[s.model_dump(mode='json') for s in signals], signal_summary=summarize_signals(signals),
+        graph_before=before, graph_after=after,
+        declared_graph=snapshot.get('declared_graph', {}),
+        declared_graph_before=snapshot.get('declared_graph_before', {}),
+        graph_analysis=analyze_graph_changes(facts, after, before).model_dump(),
+        ledger_verification=ledger.model_dump(), diagnostics=diagnostics,
+        analysis_status='partial' if diagnostics else 'complete', input_hash=snapshot.get('input_hash', ''))

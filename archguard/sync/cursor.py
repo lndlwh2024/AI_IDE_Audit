@@ -1,74 +1,70 @@
-import logging
-from pathlib import Path
-from typing import List, Tuple
-from datetime import datetime
-from .schemas import CursorFile, CursorSession, LedgerEvent
+"""会话游标的进程内/进程间安全合并与增量校验。"""
+import re
+from datetime import datetime, timezone
+from archguard.storage import metadata_path, read_json, atomic_json, transaction
+from .schemas import CursorFile, CursorSession
 from .ledger import LedgerManager
 
-logger = logging.getLogger(__name__)
+
+def valid_id(ide_id):
+    if not re.fullmatch('[a-z0-9-]+', ide_id):
+        raise ValueError('IDE 标识仅支持小写字母、数字、连字符')
+    return ide_id
+
 
 class CursorManager:
-    """
-    负责维护不同 AI IDE 读者的游标信息，精确记录各个独立会话（per-session）的消费进度。
-    """
-    def __init__(self, project_root: Path):
-        self.cursors_dir = Path(project_root) / '.ide_audit' / 'collab' / 'cursors'
-        self.cursors_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, project_root):
+        self.root = project_root
+        self.cursors_dir = metadata_path(project_root, 'collab', 'cursors')
         self.ledger = LedgerManager(project_root)
 
-    def read_cursor(self, ide_id: str) -> CursorFile:
-        """读取指定 AI IDE 的全量游标文件"""
-        cursor_path = self.cursors_dir / f"{ide_id}.json"
-        if not cursor_path.exists():
+    def read_cursor(self, ide_id):
+        path = metadata_path(self.root, 'collab', 'cursors', valid_id(ide_id) + '.json')
+        data = read_json(path)
+        if data is None:
             return CursorFile(ai_ide_id=ide_id, sessions={})
-            
-        try:
-            content = cursor_path.read_text(encoding='utf-8')
-            return CursorFile.model_validate_json(content)
-        except Exception as e:
-            logger.warning(f"无法读取或解析游标 {ide_id}: {e}，将返回空游标状态")
+        if 'sessions' not in data:
+            # V1 平面游标保持原记录文件，当前新会话必须全量读取。
             return CursorFile(ai_ide_id=ide_id, sessions={})
+        cursor = CursorFile.model_validate(data)
+        if cursor.ai_ide_id != ide_id:
+            raise ValueError('游标文件与 IDE 身份不一致')
+        return cursor
 
-    def update_cursor(self, ide_id: str, session_id: str, version: str, line: int):
-        """
-        更新特定会话读取位置。
-        调用前需要结合 LockManager，确保写入时的并发一致性（读-合-写）。
-        """
-        cursor = self.read_cursor(ide_id)
-        if session_id not in cursor.sessions:
-            cursor.sessions[session_id] = CursorSession(last_read_version="v0000")
-            
-        session = cursor.sessions[session_id]
-        session.last_read_version = version
-        session.last_read_line = line
-        session.last_read_timestamp = datetime.now().isoformat()
-        
-        cursor_path = self.cursors_dir / f"{ide_id}.json"
-        cursor_path.write_text(cursor.model_dump_json(indent=2), encoding='utf-8')
-        logger.info(f"游标进度更新成功: IDE={ide_id}, Session={session_id}, Version={version}")
+    def start_session(self, ide_id):
+        valid_id(ide_id)
+        with transaction(self.root, 'cursor-' + ide_id):
+            cursor = self.read_cursor(ide_id)
+            prefix = ide_id.upper() + '_' + datetime.now().strftime('%Y%m%d%H%M') + '_'
+            used = [s[len(prefix):] for s in cursor.sessions if s.startswith(prefix)]
+            for sequence in range(26 * 9999):
+                suffix = chr(65 + sequence // 9999) + f'{sequence % 9999 + 1:04d}'
+                if suffix not in used:
+                    session_id = prefix + suffix
+                    break
+            else:
+                raise ValueError('本分钟会话编号已耗尽')
+            cursor.sessions[session_id] = CursorSession(last_read_version='v0000', last_read_line=0)
+            atomic_json(self.cursors_dir / (ide_id + '.json'), cursor.model_dump())
+            return session_id
 
-    def get_unread_events(self, ide_id: str, session_id: str) -> Tuple[List[LedgerEvent], int]:
-        """
-        基于游标位置读取未读事件。
-        如果在增量读取过程中发现行号与版本不一致，会自动退回至全量读取模式以保证数据一致性。
-        返回: (事件列表, 最新行号)
-        """
+    def update_cursor(self, ide_id, session_id, version, line):
+        valid_id(ide_id)
+        if line < 0 or version != f'v{line:04d}':
+            raise ValueError('版本与行号不一致')
+        with transaction(self.root, 'cursor-' + ide_id):
+            cursor = self.read_cursor(ide_id)
+            cursor.sessions[session_id] = CursorSession(last_read_version=version, last_read_line=line,
+                last_read_timestamp=datetime.now(timezone.utc).isoformat())
+            atomic_json(self.cursors_dir / (ide_id + '.json'), cursor.model_dump())
+
+    def get_unread_events(self, ide_id, session_id):
         cursor = self.read_cursor(ide_id)
-        last_line = cursor.sessions.get(session_id, CursorSession(last_read_version="v0000")).last_read_line
-        
-        start_line = (last_line + 1) if last_line else 1
-        events = self.ledger.read_events_from_line(start_line)
-        
-        # 严格校验：第一条获取的事件的 version 必须满足预期 v{start_line:04d}
-        if events:
-            expected_version = f"v{start_line:04d}"
-            if events[0].version != expected_version:
-                logger.warning(
-                    f"行号校验失败。预期第一条是 {expected_version} 但实际读取到 {events[0].version}。"
-                    "可能因为 ledger 曾被手动修剪，退回全量读取模式处理。"
-                )
-                events = self.ledger.read_all_events()
-                start_line = 1
-                
-        new_line = (start_line - 1) + len(events)
-        return events, new_line
+        session = cursor.sessions.get(session_id)
+        events = self.ledger.read_all_events()
+        line = session.last_read_line if session else None
+        if line is None or line > len(events) or line < 0:
+            line = 0
+        elif line and events[line - 1].version != session.last_read_version:
+            line = 0
+        return events[line:], len(events)
