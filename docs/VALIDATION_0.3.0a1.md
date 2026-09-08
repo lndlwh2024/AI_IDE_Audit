@@ -16,7 +16,9 @@
 
 该检查共享当前环境依赖，不等于全部依赖从空白操作系统重新安装。后续 CI 应覆盖 Python 3.11+ 和目标平台。未向 PyPI 发布。
 
-最终本地 wheel 的 SHA256：`b0b4963d1d2e658dfe3c9694bdc485624dcbb9641dc3a4719844dfe8d6dc9b87`。已增加 GitHub Actions 的 Windows/Linux × Python 3.11/3.12 测试和构建矩阵；工作流配置存在不代表远端运行已通过。
+最终本地 wheel 的 SHA256：`b0b4963d1d2e658dfe3c9694bdc485624dcbb9641dc3a4719844dfe8d6dc9b87`。
+
+GitHub Actions 的 Windows/Linux × Python 3.11/3.12 四组测试和构建均已通过：[运行 34292263659，源码提交 973f388](https://github.com/lndlwh2024/AI_IDE_Audit/actions/runs/34292263659)。这是独立远端环境的安装、测试与打包证据。该次运行提示旧 Actions 使用 Node 20，随后依据官方发布将 checkout 更新为 v7.0.1、setup-python 更新为 v7.0.0；最新工作流结果应按对应提交在 Actions 页面核对。
 
 ## 真实 Codex 基础闭环
 
