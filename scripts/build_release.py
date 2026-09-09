@@ -10,6 +10,8 @@ from pathlib import Path
 
 
 def build():
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
     root = Path(__file__).resolve().parents[1]
     output = root / 'dist'
     output.mkdir(exist_ok=True)

@@ -7,6 +7,8 @@ from pathlib import Path
 
 
 def install(project_root):
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
     if sys.version_info < (3, 11):
         raise RuntimeError('需要 Python 3.11 或更新版本')
     root = Path(project_root).resolve(strict=True)

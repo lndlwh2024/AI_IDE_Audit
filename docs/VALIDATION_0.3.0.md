@@ -11,3 +11,9 @@
 - 打包：统一插件清单和 Skill 校验；wheel 排除外部迁移；隔离安装核验版本与入口。最终附件以 dist/SHA256SUMS.txt 为准。
 
 没有执行整个 Codex 桌面强退重启和永久删除聊天；不宣称全平台、全语言自动语义解析或系统级只读隔离。非 Python 语义由 A 维护，固定事实包区分自动物理证据与人工申报。
+
+## 安装与发布验收补充
+
+已使用官方个人插件目录安装 ide-audit@personal，Codex 返回实际缓存目录 0.3.0。在全新隔离 Git 项目运行缓存中的安装脚本，独立 venv 下载并安装依赖成功；使用该环境的 Python 隔离导入 wheel，真实 MCP STDIO 握手、桌面桥接工具列表及 start_sync_session 建图通过。
+
+首次 GitHub CI 的四组测试均通过，Windows 构建最后输出中文时因 cp1252 编码失败；已将构建/插件接入脚本输出明确设为 UTF-8，功能代码未改变。最终 CI 和公开附件见 GitHub Release。
