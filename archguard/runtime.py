@@ -28,6 +28,13 @@ def get_result(project_root, audit_id=None):
 
 
 def prepare_commit(project_root):
+    from archguard.sync.workflow import SyncWorkflow
+    with transaction(project_root, 'workflow'):
+        SyncWorkflow(project_root).recover()
+        return _prepare_commit(project_root)
+
+
+def _prepare_commit(project_root):
     """在 commit 前固定暂存树，供 post-commit 匹配，不提前猜测提交 SHA。"""
     repo = git.Repo(project_root)
     try:

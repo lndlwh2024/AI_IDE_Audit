@@ -1,5 +1,6 @@
 """协同意图租约：使用串行化管理与所有者令牌保护创建和释放。"""
 import hashlib
+import os
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 from archguard.storage import metadata_path, read_json, atomic_json, transaction
@@ -20,6 +21,13 @@ class SyncLock:
 
     def _create_lock(self, lock_path, lock_data):
         with transaction(self.project_root, 'leases'):
+            if lock_data.scope:
+                for other_path in self.collab_locks_dir.glob('intent-*.lock.json'):
+                    other = read_json(other_path)
+                    if (other and other.get('scope') and
+                            datetime.fromisoformat(other['expires_at']) > datetime.now(timezone.utc) and
+                            scopes_overlap(lock_data.scope, other['scope'])):
+                        raise LockError('文件或父目录被另一有效编辑意图占用')
             previous = read_json(lock_path)
             if previous:
                 expires = previous.get('expires_at')
@@ -56,7 +64,7 @@ class SyncLock:
 
     def _scope_path(self, scope):
         from archguard.core.ledger_analyzer import normalize
-        scope = normalize(scope)
+        scope = os.path.normcase(normalize(scope)).replace(chr(92), "/")
         return self.collab_locks_dir / ('intent-' + hashlib.sha256(scope.encode()).hexdigest() + '.lock.json')
 
     def acquire_intent_lock(self, scope, ide_id, purpose):
@@ -87,3 +95,9 @@ class SyncLock:
                 records[path] = current
             for path, current in records.items():
                 atomic_json(path, dict(current, expires_at=(now + timedelta(minutes=10)).isoformat()))
+
+
+def scopes_overlap(left, right):
+    from archguard.core.ledger_analyzer import normalize
+    a, b = [os.path.normcase(normalize(x)).replace(chr(92), '/').rstrip('/') for x in (left, right)]
+    return a == b or a.startswith(b + '/') or b.startswith(a + '/')

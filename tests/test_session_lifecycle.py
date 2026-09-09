@@ -13,10 +13,12 @@ class Client:
         self.calls = []
 
     def request(self, method, params):
+        if method == 'project/list':
+            return {'data': [{'id': 'test-project', 'roots': [{'path': str(self.root)}]}], 'nextCursor': None}
         self.calls.append((method, params))
         if method == 'thread/resume' and self.error:
             raise self.error
-        return {'thread': {'id': params.get('threadId', 'new-b'), 'cwd': str(self.returned_root)}}
+        return {'thread': {'id': params.get('threadId', 'new-b'), 'cwd': str(self.returned_root), 'projectId': 'test-project'}}
 
 
 def test_restart_keeps_project_and_same_thread(tmp_path):

@@ -1,9 +1,10 @@
 """纯函数图谱构建：输入固定版本源码，不写入任何文件。"""
 import ast
+import hashlib
 from pathlib import PurePosixPath
 
 
-def build_graph(sources: dict[str, str], previous: dict | None = None) -> dict:
+def build_graph(sources: dict[str, str], previous: dict | None = None, parse_cache: dict | None = None) -> dict:
     previous = previous or {}
     index = {}
     for path in sources:
@@ -19,34 +20,50 @@ def build_graph(sources: dict[str, str], previous: dict | None = None) -> dict:
                            purpose=old.get('purpose', '职责待补充'))
     # 非 Python 关系保留 A 的显式声明；不把未解析语言伪装成 AST 已验证。
     for edge in previous.get('edges', []):
-        if edge.get('from') in sources and not edge['from'].endswith('.py'):
+        if edge.get('from') in sources and (not edge['from'].endswith('.py') or edge.get('type') != 'imports'):
             if edge.get('to') in sources or str(edge.get('to', '')).startswith('external:'):
                 edges.append(edge)
     for module, path in sorted(index.items()):
-        try:
-            tree = ast.parse(sources[path], filename=path)
-        except SyntaxError as exc:
-            diagnostics.append({'file': path, 'error': str(exc)})
-            continue
+        digest = hashlib.sha256(sources[path].encode()).hexdigest()
+        cached = (parse_cache or {}).get(path)
+        if cached is None or cached.get('hash') != digest:
+            try:
+                tree = ast.parse(sources[path], filename=path)
+            except SyntaxError as exc:
+                diagnostics.append({'file': path, 'error': str(exc)})
+                continue
+            specs = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    specs.append({'kind': 'import', 'names': [n.name for n in node.names]})
+                elif isinstance(node, ast.ImportFrom):
+                    specs.append({'kind': 'from', 'names': [n.name for n in node.names],
+                                  'level': node.level, 'module': node.module or ''})
+            cached = {'hash': digest, 'specs': specs, 'doc': ast.get_docstring(tree),
+                      'exports': sorted(n.name for n in tree.body
+                          if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)))}
+            if parse_cache is not None:
+                parse_cache[path] = cached
         old = previous.get('nodes', {}).get(path, {})
         imports = set()
         package = module if path.endswith('/__init__.py') else module.rpartition('.')[0]
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                imports.update(item.name for item in node.names)
-            elif isinstance(node, ast.ImportFrom):
-                if node.level:
+        # 解析缓存只存语法事实；每次用完整节点索引重新解析目标，避免新增模块后边仍指向外部。
+        for spec in cached['specs']:
+            if spec['kind'] == 'import':
+                imports.update(spec['names'])
+            else:
+                if spec['level']:
                     parts = package.split('.') if package else []
-                    keep = len(parts) - node.level + 1
+                    keep = len(parts) - spec['level'] + 1
                     if keep < 0:
                         diagnostics.append({'file': path, 'error': '相对导入超出包范围'})
                         continue
                     prefix = '.'.join(parts[:keep])
-                    base = '.'.join(p for p in (prefix, node.module) if p)
+                    base = '.'.join(p for p in (prefix, spec['module']) if p)
                 else:
-                    base = node.module or ''
-                for item in node.names:
-                    candidate = '.'.join(p for p in (base, item.name) if p)
+                    base = spec['module']
+                for name in spec['names']:
+                    candidate = '.'.join(p for p in (base, name) if p)
                     imports.add(candidate if candidate in index else base)
         for imported in sorted(imports - {''}):
             target = index.get(imported)
@@ -58,10 +75,9 @@ def build_graph(sources: dict[str, str], previous: dict | None = None) -> dict:
                     target = index.get(prefix)
             edges.append({'from': path, 'to': target or 'external:' + imported, 'type': 'imports'})
         nodes[path] = dict(old, module=old.get('module', PurePosixPath(path).parts[0] if '/' in path else 'root'),
-                           purpose=old.get('purpose', ast.get_docstring(tree) or '职责待补充'),
-                           imports=sorted(imports), exports=sorted(n.name for n in tree.body
-                              if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))))
-    return {'meta': {'version': 'v0000', 'last_updated': '', 'updated_by': 'scanner',
+                           purpose=old.get('purpose', cached['doc'] or '职责待补充'),
+                           imports=sorted(imports), exports=cached['exports'])
+    return {**previous, 'meta': {'version': 'v0000', 'last_updated': '', 'updated_by': 'scanner',
                      'total_nodes': len(nodes), 'total_edges': len(edges)},
             'modules': sorted({n['module'] for n in nodes.values()}), 'nodes': nodes, 'edges': edges,
             'diagnostics': diagnostics, 'supported_languages': ['python']}

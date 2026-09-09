@@ -103,7 +103,7 @@ class FakeClient:
     def request(self, method, params):
         self.calls.append((method, params))
         if method.startswith('thread/'):
-            return {'thread': {'id': 'real-protocol-shaped-id', 'cwd': params.get('cwd')}}
+            return {'thread': {'id': 'real-protocol-shaped-id', 'cwd': params.get('cwd'), 'projectId': 'test-project'}}
         self.notifications = [
             {'method': 'item/completed', 'params': {'threadId': 'real-protocol-shaped-id', 'turnId': 'turn1',
                 'item': {'type': 'agentMessage', 'text': json.dumps(self.verdict)}}},
@@ -121,6 +121,7 @@ def test_dispatch_is_readonly_and_completed_job_is_not_sent_twice(tmp_path):
     client = FakeClient(verdict())
     manager = CodexSessionManager(tmp_path, client_factory=lambda: client)
     manager._config = lambda _: {}
+    manager._project_id = lambda _: 'test-project'
     assert manager.audit(make_report()) == verdict()
     assert manager.audit(make_report()) == verdict()
     assert [method for method, _ in client.calls] == ['thread/start', 'thread/name/set', 'turn/start']
@@ -140,6 +141,7 @@ def test_invalid_verdict_is_rejected(tmp_path, issue):
         result['commit_hash'] = 'b' * 40
     manager = CodexSessionManager(tmp_path, client_factory=lambda: FakeClient(result))
     manager._config = lambda _: {}
+    manager._project_id = lambda _: 'test-project'
     with pytest.raises(AppServerError):
         manager.audit(make_report())
     assert not (tmp_path / '.ide_audit/verdicts').exists()

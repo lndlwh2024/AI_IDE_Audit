@@ -1,3 +1,16 @@
+---
+name: ide-audit
+description: 在 Codex 桌面项目中启用 IDE_Audit、维护协同图谱和操作记账、在每次提交后启动同项目独立 B 大模型审计，并处理裁决答疑和断线恢复。用于项目接入及已启用项目的开发交接；完整替代独立 dual-agent-sync 的逻辑工作流。
+---
+
+# IDE_Audit
+
+首次安装：在本 Skill 的插件根目录找到 `scripts/install.py`，使用 Python 3.11+ 执行 `python <绝对脚本路径> --project-root <当前项目绝对路径>`。脚本从随插件发布的 wheel 安装独立项目运行环境和开发 MCP/Hook，保留原配置。依赖从 pip 配置的源安装，使用已有 Codex 登录，不需要新的模型 API Key。安装后重新打开项目任务以加载 MCP；如果工具已经可用，直接接入。不得把插件目录作为用户项目。
+
+旧项目迁移不属于插件，不能自动复制 .ai-sync 或删除旧 Skill。需要切换旧工作流时使用单独交付的外部迁移工具。
+
+仅在 A 执行以下统一开发守则；B 必须遵循独立审计守则，不能调用 A 的维护工具。
+
 # IDE_Audit 统一开发守则（A 窗口）
 
 此守则已融合 dual-agent-sync；协同数据统一在 `.ide_audit/`。不要再运行独立旧 Skill。

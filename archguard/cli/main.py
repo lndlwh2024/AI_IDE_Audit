@@ -49,8 +49,8 @@ def audit(root, notify, json_output):
     result = execute(lambda: audit_project(root))
     click.echo(result.model_dump_json(indent=2) if json_output else generate_report(result.model_dump(mode='json')))
     if notify:
-        from archguard.adapters.codex.session_manager import CodexSessionManager
-        execute(lambda: CodexSessionManager(root).audit(result))
+        from archguard.dispatch_queue import enqueue
+        click.echo(json.dumps(execute(lambda: enqueue(root, result.audit_id)), ensure_ascii=False))
 
 
 @cli.command()
@@ -134,6 +134,36 @@ def ask(root, question, audit_id):
     from archguard.runtime import get_result
     from archguard.adapters.codex.session_manager import CodexSessionManager
     click.echo(execute(lambda: CodexSessionManager(root).ask(get_result(root, audit_id), question)))
+
+
+
+
+
+@cli.command('queue-status')
+@click.option('--audit-id', default=None)
+@click.pass_obj
+def queue_status(root, audit_id):
+    """显示当前提交的后台派发与 B 会话标识。"""
+    from archguard.runtime import get_result
+    from archguard.dispatch_queue import status
+    click.echo(json.dumps(execute(lambda: status(root, audit_id or get_result(root).audit_id)), ensure_ascii=False))
+
+
+@cli.command('drain')
+@click.pass_obj
+def drain_queue(root):
+    """串行处理已封存的队列，不扩大审计范围。"""
+    from archguard.dispatch_queue import drain
+    execute(lambda: drain(root))
+
+
+@cli.command('retry-audit')
+@click.option('--audit-id', required=True)
+@click.pass_obj
+def retry_audit(root, audit_id):
+    """核验原轮次后恢复失败队列，不盲目重复发送。"""
+    from archguard.dispatch_queue import retry
+    click.echo(json.dumps(execute(lambda: retry(root, audit_id)), ensure_ascii=False))
 
 
 if __name__ == '__main__':

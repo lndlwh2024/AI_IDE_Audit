@@ -31,7 +31,7 @@ class GraphNode(BaseModel):
     """代码图谱节点"""
     module: str
     purpose: str
-    exports: Optional[List[str]] = None
+    exports: Optional[List[str | Dict]] = None
     imports: Optional[List[str]] = None
     api_calls: Optional[List[str]] = None
 
@@ -42,7 +42,7 @@ class GraphEdge(BaseModel):
     model_config = {"populate_by_name": True}
     from_: str = Field(alias="from")
     to: str
-    type: Literal['imports', 'require', 'api_call', 'extends', 'implements']
+    type: str = Field(min_length=1)
 
 class GraphMeta(BaseModel):
     """图谱元数据"""
