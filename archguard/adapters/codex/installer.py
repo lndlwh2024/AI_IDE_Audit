@@ -28,13 +28,6 @@ def install_to_project(project_root, ide='codex-desktop'):
         raise ValueError('当前仅支持 Codex 桌面版')
     root = Path(project_root).resolve()
     git.Repo(root)
-    if (root / '.ai-sync').exists():
-        from archguard.sync.migration import manifest
-        receipts = metadata_path(root, 'migrations').glob('*/manifest.json')
-        current = manifest(root / '.ai-sync')
-        if not any((record := read_json(path, {})).get('status') == 'completed'
-                   and record.get('files') == current for path in receipts):
-            raise ValueError('检测到未迁移或迁移后变化的旧资产，请先执行 archguard migrate --dry-run 并完成迁移')
     config = root / '.codex' / 'config.toml'
     agents = root / 'AGENTS.md'
     for target in (config, agents):

@@ -116,15 +116,6 @@ def history(root, limit):
 
 
 @cli.command()
-@click.option('--dry-run', is_flag=True)
-@click.pass_obj
-def migrate(root, dry_run):
-    """校验并迁移旧 .ai-sync 资产。"""
-    from archguard.sync.migration import migrate_assets
-    click.echo(json.dumps(execute(lambda: migrate_assets(root, dry_run)), ensure_ascii=False, indent=2))
-
-
-@cli.command()
 @click.option('--audit-id', default=None, help='已封存任务的完整提交 SHA')
 @click.pass_obj
 def recover(root, audit_id):

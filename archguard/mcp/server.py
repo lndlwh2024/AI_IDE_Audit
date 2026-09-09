@@ -52,9 +52,12 @@ def create_server(project_root, role='audit', audit_id=None):
         from archguard.sync.lock import SyncLock
         from archguard.sync.schemas import CodeGraph
         leases = {}
+        ready_sessions = set()
 
         @app.tool(description='声明准备编辑的文件；检测有效租约重叠，冲突则失败')
         def begin_edit(ide_id: str, session_id: str, files: list[str], purpose: str) -> dict:
+            if (ide_id, session_id) not in ready_sessions:
+                raise ValueError('请先接入会话并建立或更新图谱，再开始编辑')
             from archguard.core.ledger_analyzer import normalize
             requested = {normalize(p) for p in files}
             unread, _ = CursorManager(root).get_unread_events(ide_id, session_id)
@@ -114,9 +117,32 @@ def create_server(project_root, role='audit', audit_id=None):
                 raise ValueError('图谱变动引用不存在的账本版本')
             return GraphManager(root).sync(ide_id, trigger_version).model_dump(mode='json', by_alias=True)
 
-        @app.tool(description='创建独立协同会话，返回唯一会话 ID')
+        @app.tool(description='A 首次接入：建立或刷新图谱后创建协同会话，返回会话 ID')
         def start_sync_session(ide_id: str) -> str:
-            return CursorManager(root).start_session(ide_id)
+            from archguard.sync.cursor import valid_id
+            valid_id(ide_id)
+            GraphManager(root).sync(ide_id, 'v0000')
+            session_id = CursorManager(root).start_session(ide_id)
+            ready_sessions.add((ide_id, session_id))
+            return session_id
+
+        @app.tool(description='A 再次接入已有会话：立即根据当前源码刷新原图谱，成功后允许编辑')
+        def enter_sync_session(ide_id: str, session_id: str) -> dict:
+            if session_id not in CursorManager(root).read_cursor(ide_id).sessions:
+                raise ValueError('协同会话不存在，请先 start_sync_session')
+            ready_sessions.discard((ide_id, session_id))
+            graph = GraphManager(root).sync(ide_id, 'v0000')
+            ready_sessions.add((ide_id, session_id))
+            return graph.model_dump(mode='json', by_alias=True)
+
+        @app.tool(description='A 长时间编辑时续期自己持有的文件租约；失效时必须停止编辑并重新处理冲突')
+        def renew_edit(ide_id: str, session_id: str, files: list[str]) -> dict:
+            manager = leases.get((ide_id, session_id))
+            if manager is None:
+                raise ValueError('当前服务会话没有持有这些租约')
+            manager.renew_intent_locks(files)
+            return {'renewed': files, 'lease_seconds': 600}
+
 
         # 同一服务会话中保存已交付范围，只有读过的版本才允许推进。
         delivered = {}

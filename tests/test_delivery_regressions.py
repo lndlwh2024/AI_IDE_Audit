@@ -10,7 +10,7 @@ from archguard.adapters.codex.session_manager import CodexSessionManager, AppSer
 from archguard.adapters.git_hook import hook_path, install_post_commit_hook, uninstall_post_commit_hook
 from archguard.core.engine import AuditResult
 from archguard.storage import atomic_json, metadata_path
-from archguard.sync.migration import migrate_assets, manifest
+from scripts.legacy_sync_assets import migrate_assets, manifest
 
 
 def test_install_preserves_custom_configuration_and_hook(tmp_path):
@@ -103,7 +103,7 @@ class FakeClient:
     def request(self, method, params):
         self.calls.append((method, params))
         if method.startswith('thread/'):
-            return {'thread': {'id': 'real-protocol-shaped-id'}}
+            return {'thread': {'id': 'real-protocol-shaped-id', 'cwd': params.get('cwd')}}
         self.notifications = [
             {'method': 'item/completed', 'params': {'threadId': 'real-protocol-shaped-id', 'turnId': 'turn1',
                 'item': {'type': 'agentMessage', 'text': json.dumps(self.verdict)}}},

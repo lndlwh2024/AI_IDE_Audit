@@ -57,10 +57,7 @@ def transaction(root, name='state', timeout=15):
     path = metadata_path(root, 'locks', name + '.lock')
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('a+b') as stream:
-        stream.seek(0, 2)
-        if stream.tell() == 0:
-            stream.write(b'0')
-            stream.flush()
+        # 对固定字节区间加锁，不在加锁前写入占位字节，避免首次并发初始化竞争。
         deadline = time.monotonic() + timeout
         while True:
             try:

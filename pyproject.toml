@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ide-audit"
-version = "0.3.0a1"
+version = "0.3.0a2"
 description = "IDE_Audit — AI IDE 架构审计插件，通过 git diff + 用户需求自动检测超出范围的架构变更"
 readme = "README.md"
 license = {text = "MIT"}

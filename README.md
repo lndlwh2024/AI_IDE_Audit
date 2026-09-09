@@ -2,7 +2,7 @@
 
 > 融合协同记账、代码图谱与独立审计的 AI IDE 插件。
 
-当前版本 **0.3.0a1** 是审计修复预发布版本。79 项自动化测试通过；真实 Codex 合成项目已验证合理/不合理裁决、桌面任务列表可见、原会话追问、服务端恢复及拒绝源码写入。大型项目、完整历史兼容和协同跨步骤事务仍待验收，不能将此版本视作 V2.0 全部完成。
+当前版本 **0.3.0a2** 是审计修复预发布版本。91 项自动化测试通过；真实 Codex 合成项目已验证合理/不合理裁决、桌面任务列表可见、原会话追问、服务端恢复及拒绝源码写入。大型项目、同桌面项目 B 和协同跨步骤事务仍待验收，不能将此版本视作 V2.0 全部完成。
 
 ## 核心特性
 
@@ -23,7 +23,7 @@ python -m pip install .
 cd /path/to/your-project
 archguard install --ide codex
 
-# 已有 .ai-sync 时，先 migrate --dry-run，再 migrate，最后 install
+# 插件独立安装；旧项目切换见 scripts/README.md，不属于插件命令
 # Codex 需已登录、信任项目并加载项目级 MCP 配置
 ```
 
@@ -35,7 +35,7 @@ archguard install --ide codex
 4. `--notify` 通过 Codex app-server 请求独立只读审计，逐文件检查需求相关性。需要可用服务连接和额度；创建 API 会话不等于桌面可见性验收。
 5. `archguard recover` 读取原 B 轮次恢复结果；`archguard ask "问题"` 在原会话追问。两者可用 `--audit-id <完整SHA>` 查询旧任务；派发结果不明确时禁止自动重复发送。
 
-无 Hook 时 `archguard commit` 完成本地分析，需要另运行 `audit --notify`。迁移保留源目录和哈希备份，目标已有资产时拒绝覆盖。不要再同时运行独立 dual-agent-sync。
+无 Hook 时 `archguard commit` 完成本地分析，需要另运行 `audit --notify`。旧项目迁移工具独立放在 scripts/，不随插件发行，不是安装前提。不要再同时运行独立 dual-agent-sync。
 
 物理图谱自动解析 Python 导入；非 Python 关系和人工职责以单独封存的申报图谱提供给 B，不能冒充已验证的源码事实。B 请求只读沙箱，并禁用其他 MCP、插件和应用连接。已验证测试会话拒绝编辑；更广泛的系统级权限隔离仍需验收。
 

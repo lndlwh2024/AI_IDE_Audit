@@ -12,7 +12,9 @@ from archguard.storage import metadata_path, read_json, atomic_json, atomic_text
 
 
 class AppServerError(RuntimeError):
-    pass
+    def __init__(self, message, rpc_error=None):
+        super().__init__(message)
+        self.rpc_error = rpc_error or {}
 
 
 class AppServerClient:
@@ -44,7 +46,7 @@ class AppServerClient:
         threading.Thread(target=reader, daemon=True).start()
         threading.Thread(target=errors, daemon=True).start()
         try:
-            self.request('initialize', {'clientInfo': {'name': 'ide_audit', 'version': '0.3.0a1'}})
+            self.request('initialize', {'clientInfo': {'name': 'ide_audit', 'version': '0.3.0a2'}})
             self.send({'method': 'initialized', 'params': {}})
         except Exception:
             self.__exit__(None, None, None)
@@ -78,7 +80,7 @@ class AppServerClient:
             message = self.receive(deadline - time.monotonic())
             if message.get('id') == identifier and 'method' not in message:
                 if 'error' in message:
-                    raise AppServerError(json.dumps(message['error'], ensure_ascii=False))
+                    raise AppServerError(json.dumps(message['error'], ensure_ascii=False), message['error'])
                 return message.get('result', {})
             self.notifications.append(message)
 
@@ -120,6 +122,47 @@ class CodexSessionManager:
         self.session_file = metadata_path(self.root, 'session.json')
         self.client_factory = client_factory
 
+    def _open_session(self, client, params):
+        """校验工作目录并恢复 B；归档或明确丢失时新建，不回放旧聊天。"""
+        session = read_json(self.session_file, {})
+        if session:
+            saved_root = session.get('project_root')
+            if not isinstance(saved_root, str) or not saved_root.strip() or Path(saved_root).resolve() != self.root:
+                raise AppServerError('会话归属项目不匹配')
+        previous_id = session.get('thread_id')
+        recreated = False
+        replacement_reason = None
+        if previous_id:
+            try:
+                response = client.request('thread/resume', dict(params, threadId=previous_id))
+            except AppServerError as exc:
+                # 此错误已由真实协议探测确认；超时、未加载、权限或网络错误不得当成删除。
+                reasons = {
+                    'no rollout found for thread id ' + previous_id: 'missing',
+                    f'session {previous_id} is archived. Run `codex unarchive {previous_id}` to unarchive it first.': 'archived',
+                }
+                replacement_reason = reasons.get(exc.rpc_error.get('message'))
+                if exc.rpc_error.get('code') != -32600 or replacement_reason is None:
+                    raise
+                response = client.request('thread/start', dict(params, ephemeral=False))
+                recreated = True
+        else:
+            response = client.request('thread/start', dict(params, ephemeral=False))
+        thread = response['thread']
+        actual_root = thread.get('cwd')
+        if actual_root is None or Path(actual_root).resolve() != self.root:
+            raise AppServerError('Codex 返回的 B 工作目录与 A 项目不一致，已停止派发')
+        if previous_id and not recreated and thread['id'] != previous_id:
+            raise AppServerError('恢复返回了不同会话，已停止派发')
+        if recreated:
+            from uuid import uuid4
+            atomic_json(metadata_path(self.root, 'session-history', uuid4().hex + '.json'),
+                        dict(session, state=replacement_reason, replacement_thread_id=thread['id']))
+        atomic_json(self.session_file, {'project_root': str(self.root), 'thread_id': thread['id'],
+                    'previous_thread_id': previous_id if recreated else session.get('previous_thread_id'),
+                    'history_policy': 'fresh_after_' + replacement_reason if recreated else session.get('history_policy', 'resume_existing')})
+        return thread['id']
+
     def _config(self, audit_id):
         # 仅解析配置以禁用已有 MCP；不输出其中的凭据或环境变量。
         servers = {}
@@ -152,16 +195,7 @@ class CodexSessionManager:
             params = {'cwd': str(self.root), 'sandbox': 'read-only', 'approvalPolicy': 'never',
                       'developerInstructions': template, 'config': self._config(report.audit_id)}
             with self.client_factory() as client:
-                session = read_json(self.session_file, {})
-                if session and session.get('project_root') != str(self.root):
-                    raise AppServerError('会话归属项目不匹配')
-                if session.get('thread_id'):
-                    # 恢复失败不伪造成功或自动制造多个 B；保留错误供用户诊断。
-                    response = client.request('thread/resume', dict(params, threadId=session['thread_id']))
-                else:
-                    response = client.request('thread/start', params)
-                thread_id = response['thread']['id']
-                atomic_json(self.session_file, {'project_root': str(self.root), 'thread_id': thread_id})
+                thread_id = self._open_session(client, params)
                 # 使用短标题，避免桌面把整份证据 JSON 当作任务名称。
                 client.request('thread/name/set', {'threadId': thread_id,
                     'name': 'IDE_Audit · ' + self.root.name + ' · ' + report.commit_hash[:8]})

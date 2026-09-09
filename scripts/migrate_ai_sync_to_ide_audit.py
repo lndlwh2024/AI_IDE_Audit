@@ -1,7 +1,7 @@
-"""兼容旧迁移脚本入口，统一委托到已验证的插件迁移逻辑。"""
+"""外部迁移入口；单独下载运行，不随插件发布或被插件调用。"""
 import json
 import click
-from archguard.sync.migration import migrate_assets
+from legacy_sync_assets import migrate_assets
 
 
 @click.command()

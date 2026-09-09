@@ -1,11 +1,11 @@
-"""旧协同资产的可校验迁移：不覆盖旧备份，不删除源数据。"""
+"""插件发行包之外的旧项目迁移辅助工具；不覆盖备份、不删除源数据。"""
 import hashlib
 import json
 import shutil
 from pathlib import Path
 from uuid import uuid4
 from archguard.storage import metadata_path, atomic_json, transaction
-from .schemas import CodeGraph, CursorFile, LedgerEvent
+from archguard.sync.schemas import CodeGraph, CursorFile, LedgerEvent
 
 
 def manifest(directory):

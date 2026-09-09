@@ -70,3 +70,20 @@ class SyncLock:
 
     def release_graph_lock(self):
         self._release(self.graph_locks_dir / 'codegraph.lock.json')
+
+
+    def renew_intent_locks(self, scopes):
+        """整批校验后续期；已过期或已被接管的租约不得复活。"""
+        paths = {self._scope_path(scope) for scope in scopes}
+        with transaction(self.project_root, 'leases'):
+            now = datetime.now(timezone.utc)
+            records = {}
+            for path in paths:
+                current = read_json(path)
+                token = self.owned.get(str(path))
+                if (not current or not token or current.get('lock_id') != token
+                        or datetime.fromisoformat(current['expires_at']) <= now):
+                    raise LockError('租约已失效或不属于当前会话，不能续期')
+                records[path] = current
+            for path, current in records.items():
+                atomic_json(path, dict(current, expires_at=(now + timedelta(minutes=10)).isoformat()))
