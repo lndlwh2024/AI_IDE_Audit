@@ -23,6 +23,8 @@ class Client:
 
 
 def setup_manager(root):
+    from tests.control_helpers import authorize
+    authorize(root, "project")
     client=Client(root)
     manager=CodexSessionManager(root,client_factory=lambda:client)
     manager._config=lambda _: {}

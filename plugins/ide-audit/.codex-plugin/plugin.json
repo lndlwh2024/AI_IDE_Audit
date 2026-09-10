@@ -1,6 +1,6 @@
 {
   "name": "ide-audit",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "同项目双会话架构审计与完整协同图谱维护",
   "author": {
     "name": "lndlwh2024"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "IDE_Audit",
     "shortDescription": "提交后独立审计，逐文件核对需求与架构。",
-    "longDescription": "A 维护需求、协同账本与图谱；提交后后台生成事实并派发同项目只读 B 裁决及答疑。",
+    "longDescription": "每项目明确授权后，A 维护需求、协同账本与图谱；提交后同项目 B 使用 Codex 大模型独立裁决。支持暂停、A 恢复和 B token 用量查询。",
     "developerName": "lndlwh2024",
     "category": "Productivity",
     "capabilities": [

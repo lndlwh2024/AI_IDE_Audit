@@ -13,10 +13,14 @@ from archguard.adapters.codex.installer import install_to_project
 
 
 def test_a_entry_refresh_and_failure_gate(tmp_path):
+    import git
+    from tests.control_helpers import authorize
+    git.Repo.init(tmp_path)
+    authorize(tmp_path, ready=False)
     source = tmp_path / 'service.py'
     source.write_text('value = 1', encoding='utf-8')
     async def check():
-        params = StdioServerParameters(command=sys.executable, args=['-m', 'archguard.mcp.server',
+        params = StdioServerParameters(command=sys.executable, args=['-c', 'from archguard import project_control; project_control.verify_project=lambda root: None; from archguard.mcp.server import run_mcp_server; run_mcp_server()',
             '--project-root', str(tmp_path), '--role', 'dev'], env=dict(os.environ))
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as client:
@@ -68,6 +72,8 @@ def test_plugin_install_does_not_read_legacy_business_assets(tmp_path):
     legacy.mkdir()
     path = legacy / 'ledger.jsonl'
     path.write_text('旧业务内容不是插件安装的校验输入', encoding='utf-8')
+    from tests.control_helpers import authorize
+    authorize(tmp_path, ready=False)
     install_to_project(tmp_path)
     assert path.read_text(encoding='utf-8') == '旧业务内容不是插件安装的校验输入'
     assert not (tmp_path / '.ide_audit/migrations').exists()

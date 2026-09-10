@@ -43,7 +43,8 @@ def _prepare_commit(project_root):
         base = None
     with transaction(project_root):
         pending = get_pending_prompts(project_root)
-        events = LedgerManager(project_root).read_all_events()
+        from archguard.project_control import status
+        events = LedgerManager(project_root).read_all_events()[status(project_root).get('ledger_floor', 0):]
         batch = {'base_commit': base, 'tree': repo.git.write_tree(),
                  'prompts': [p for p in pending if 'base_commit' in p and p['base_commit'] == base],
                  'ledger_events': [e.model_dump(mode='json', by_alias=True) for e in events

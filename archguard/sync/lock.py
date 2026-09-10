@@ -34,7 +34,9 @@ class SyncLock:
                 if not expires or datetime.fromisoformat(expires) > datetime.now(timezone.utc):
                     raise LockError('资源被另一会话占用')
             token = uuid4().hex
-            atomic_json(lock_path, dict(lock_data.model_dump(), lock_id=token))
+            from archguard.project_control import status
+            atomic_json(lock_path, dict(lock_data.model_dump(), lock_id=token,
+                        project_controlled=status(self.project_root)['status'] == 'enabled'))
             self.owned[str(lock_path)] = token
 
     def _release(self, path):

@@ -24,6 +24,8 @@ def managed_text(original, body):
 
 
 def install_to_project(project_root, ide='codex-desktop'):
+    from archguard.project_control import require
+    require(project_root, initializing=True)
     if ide not in ('codex', 'codex-desktop'):
         raise ValueError('当前仅支持 Codex 桌面版')
     root = Path(project_root).resolve()

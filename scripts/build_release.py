@@ -37,7 +37,7 @@ def build():
                 if path.is_file(): archive.write(path,path.relative_to(stage).as_posix())
         migration_zip=output/f'ide-audit-{version}-project-switch.zip'
         with zipfile.ZipFile(migration_zip,'w',zipfile.ZIP_DEFLATED) as archive:
-            for name in ('switch_project.py','legacy_sync_assets.py','migrate_ai_sync_to_ide_audit.py','README.md'):
+            for name in ('switch_project.py','legacy_sync_assets.py','README.md'):
                 archive.write(root/'scripts'/name,name)
         shutil.copy2(wheel,output/wheel.name)
         files=[plugin_zip,migration_zip,output/wheel.name]

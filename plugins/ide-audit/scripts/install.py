@@ -6,7 +6,9 @@ import venv
 from pathlib import Path
 
 
-def install(project_root):
+def install(project_root, consent=False):
+    if not consent:
+        raise RuntimeError("请先明确授权当前项目，再使用 --consent；安装插件本身不表示同意")
     if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8')
     if sys.version_info < (3, 11):
@@ -24,11 +26,13 @@ def install(project_root):
     venv.EnvBuilder(with_pip=True).create(runtime)
     python = runtime / ('Scripts/python.exe' if sys.platform == 'win32' else 'bin/python')
     subprocess.run([str(python), '-m', 'pip', 'install', str(wheels[0])], check=True)
-    subprocess.run([str(python), '-m', 'archguard.cli.main', '--project-root', str(root), 'install'], check=True)
+    subprocess.run([str(python), '-m', 'archguard.cli.main', '--project-root', str(root), 'install', '--consent'], check=True)
     print('项目接入完成。重新打开 A 任务加载 MCP，然后立即建立或刷新图谱。')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--project-root', required=True)
-    install(parser.parse_args().project_root)
+    parser.add_argument('--consent', action='store_true')
+    args = parser.parse_args()
+    install(args.project_root, args.consent)

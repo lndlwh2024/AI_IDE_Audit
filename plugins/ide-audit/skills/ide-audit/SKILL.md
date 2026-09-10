@@ -5,7 +5,7 @@ description: 在 Codex 桌面项目中启用 IDE_Audit、维护协同图谱和�
 
 # IDE_Audit
 
-首次安装：在本 Skill 的插件根目录找到 `scripts/install.py`，使用 Python 3.11+ 执行 `python <绝对脚本路径> --project-root <当前项目绝对路径>`。脚本从随插件发布的 wheel 安装独立项目运行环境和开发 MCP/Hook，保留原配置。依赖从 pip 配置的源安装，使用已有 Codex 登录，不需要新的模型 API Key。安装后重新打开项目任务以加载 MCP；如果工具已经可用，直接接入。不得把插件目录作为用户项目。
+首次安装必须先询问当前项目用户授权；仅安装插件不启用。明确同意后才执行接入脚本，并传入 --consent。首次安装：在本 Skill 的插件根目录找到 `scripts/install.py`，使用 Python 3.11+ 执行 `python <绝对脚本路径> --project-root <当前项目绝对路径> --consent`。脚本从随插件发布的 wheel 安装独立项目运行环境和开发 MCP/Hook，保留原配置。依赖从 pip 配置的源安装，使用已有 Codex 登录，不需要新的模型 API Key。安装后重新打开项目任务以加载 MCP；如果工具已经可用，直接接入。不得把插件目录作为用户项目。
 
 旧项目迁移不属于插件，不能自动复制 .ai-sync 或删除旧 Skill。需要切换旧工作流时使用单独交付的外部迁移工具。
 
@@ -14,6 +14,14 @@ description: 在 Codex 桌面项目中启用 IDE_Audit、维护协同图谱和�
 # IDE_Audit 统一开发守则（A 窗口）
 
 此守则已融合 dual-agent-sync；协同数据统一在 `.ide_audit/`。不要再运行独立旧 Skill。
+
+## 项目授权与暂停（优先于后续开发步骤）
+
+先查询 get_project_status。未选择时只询问用户是否为当前项目开启完整能力，并说明会使用 Codex 额度；未明确同意不得扫描、记录需求、记账、自动提交或启动 B。明确拒绝后不重复询问。只有明确同意，才运行插件安装脚本 --consent 或 archguard install --consent；授权只属于当前项目。
+
+已暂停时不执行下面的自动步骤。用户在 A/B 任意任务要求暂停，调用 pause_project；保留历史。要求恢复调用 resume_project，仅转为 pending_a。只有 A 可调用 start_sync_session / enter_sync_session 更新图谱和同步检查点，成功后才恢复自动工作。B 不得为恢复全面扫描项目。A 同步失败时保持等待；暂停前需求与准备批次保留归档，不授权新提交。暂停前积压提交不自动重放，确需继续时先核对原 B 再显式 retry-audit。
+
+在发送桌面 B 消息前再次查询项目状态；状态已暂停或修订号与领取时不同，不发送，保留请求供核对。不要把控制指令当开发需求。审计后查询 get_token_usage 并向用户展示本轮及 B 已记录用量；未知/区间统计须明确，不用账户额度代替，不猜数。
 
 1. 每次用户需求及补充约束均逐条调用 `record_prompt` 保存原文，禁止改写或合并丢失条件。
 2. 使用稳定的小写 IDE 标识和当前窗口会话 ID；首次接入调用 `start_sync_session`，它先建立图谱；已有图谱则基于原图谱刷新。每次再次接入（包括服务重启、恢复旧任务）调用 `enter_sync_session` 立即更新图谱，成功前不得编码。图谱始终由 A 维护，B 不参与写入。任务开始和编辑前调用 `get_sync_updates`，读取全部未读事件及图谱。展示来自其他 IDE 的来源、版本、类型、时间、摘要、影响文件、有效诊断、后续行动；理解后才调用 `acknowledge_sync`，不能跳过中间版本。
@@ -24,3 +32,7 @@ description: 在 Codex 桌面项目中启用 IDE_Audit、维护协同图谱和�
 7. post-commit 封存客观审计并加入后台队列。提交后调用 `get_audit_status` 查询，出现 dispatch.thread_id 后，使用 Codex 桌面内置 `navigate_to_codex_page` 打开该 B；这是统一插件 A 工作流的必需步骤。可用 `archguard queue-status` 查询同样状态。若工具暂未出现则搜索该内置工具；不可用时报告具体原因和 B 标识，不能谎称已打开。后端使用真实 projectId 校验同项目归属，A 必须核对桌面打开结果。B 尚未出现时保持跟进队列；出现 needs_attention 时展示错误并处理原任务，不重复创建。若 desktop_pending 非空，按顺序处理：dispatch.status 已是 desktop_sending 时先调用 collect_desktop_audit 回收原请求，不得再次领取或发送；尚未领取才调用 claim_desktop_audit；ready 为 true 时将返回 prompt 原文通过桌面内置 send_message_to_thread 发给返回 thread_id，随后使用 wait_threads 等待并调用 collect_desktop_audit 回收真实 B 裁决。ready 为 false 时等待 B 完成上一轮。严禁 A 自行构造裁决，严禁重复领取/发送，严禁为了绕过活动持有者冲突新建 B。同一次 Codex 运行中始终复用当前 B；原 B 被归档或确实不存在才新建 B 并递增编号。跨次运行先尝试恢复/原生派发，只有确认不可恢复才报告并按用户确认的编号策略处理。不要自动删除 B，永久删除必须得到用户明确确认。开发窗口不得代替 B 作最终裁决。必要证据缺失时先修复证据链，禁止编造通过报告。没有用户明确要求不执行 git push。
 
 如果当前任务是 B 审计，以上开发流程不适用：不得记录需求、写协同资产或提交代码，只读取绑定审计任务并裁决答疑。
+
+用户明确拒绝首次开启时，用 `archguard --project-root <当前项目> decline --confirmed` 保存选择，后续不重复询问。该命令必须在用户明确拒绝后执行。
+
+尚未安装项目运行环境时，明确拒绝可用插件内 `python <插件目录>/scripts/session_start.py --decline --confirmed --project-root <当前项目>` 留存选择，不需要下载依赖。

@@ -15,7 +15,7 @@ def test_stdio_audit_role_cannot_write(tmp_path):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 tools = (await session.list_tools()).tools
-                assert {t.name for t in tools} == {'audit_changes', 'get_architecture_graph', 'get_ledger_records', 'get_file_diff', 'get_prompts'}
+                assert {t.name for t in tools} == {'audit_changes', 'get_architecture_graph', 'get_ledger_records', 'get_file_diff', 'get_prompts', 'get_project_status', 'pause_project', 'resume_project', 'get_token_usage'}
                 assert all(t.input_schema is not None for t in tools)
                 result = await session.call_tool('record_prompt', {'prompt_text': '不允许'})
                 assert result.is_error
@@ -26,6 +26,8 @@ def test_stdio_audit_role_cannot_write(tmp_path):
 
 
 def test_stdio_dev_records_prompt(tmp_path):
+    from tests.control_helpers import authorize
+    authorize(tmp_path)
     async def check():
         params = StdioServerParameters(command=sys.executable, args=['-m', 'archguard.mcp.server',
             '--project-root', str(tmp_path), '--role', 'dev'], env=dict(os.environ))

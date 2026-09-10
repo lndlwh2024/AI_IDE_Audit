@@ -1,5 +1,7 @@
 """桌面已持有 B 时的原生派发交接；结果必须读取真实 B 的新轮次。"""
 import json
+from archguard import project_control as control
+from archguard import usage
 from pathlib import Path
 from uuid import uuid4
 from archguard.storage import metadata_path, atomic_json, read_json, transaction
@@ -30,21 +32,27 @@ def prepare_dispatch(manager, client, report, thread_id):
 
 
 def claim(root, audit_id, manager=None):
+    control.require(root)
     identifier = _key(audit_id)
     manager = manager or CodexSessionManager(root)
     path = metadata_path(root, 'jobs', identifier, 'dispatch.json')
     with transaction(root, 'codex-session'):
         state = read_json(path, {})
+        queued = read_json(metadata_path(root, 'queue', identifier + '.json'), {})
+        if queued and queued.get('epoch') != control.status(root).get('epoch'):
+            raise AppServerError('暂停前请求须明确 retry-audit，不能自动领取旧队列')
         if state.get('status') != 'desktop_ready':
             raise AppServerError('没有可领取的桌面派发；已领取时必须先核对原 B，不能重复发送')
         with manager.client_factory() as client:
             thread = verify_thread(manager, client, state['thread_id'])
+            state['usage_before'] = usage.capture(root, client, state['thread_id'])
         if thread.get('status', {}).get('type') == 'active':
             return {'ready': False, 'reason': 'B 正在处理上一轮，请等待', 'thread_id': state['thread_id']}
         state['previous_turn_ids'] = [t['id'] for t in thread.get('turns', [])]
+        control.require(root)
         state['status'] = 'desktop_sending'
         atomic_json(path, state)
-        return {'ready': True, 'thread_id': state['thread_id'], 'prompt': state['message'], 'audit_id': identifier}
+        return {'ready': True, 'thread_id': state['thread_id'], 'prompt': state['message'], 'audit_id': identifier, 'project_revision': control.status(root)['revision']}
 
 
 def collect(root, audit_id, manager=None):
@@ -59,6 +67,7 @@ def collect(root, audit_id, manager=None):
             raise AppServerError('该任务尚未领取桌面派发')
         with manager.client_factory() as client:
             thread = verify_thread(manager, client, state['thread_id'])
+            usage_after = usage.capture(root, client, state['thread_id'])
         for turn in thread.get('turns', []):
             if turn['id'] in state['previous_turn_ids'] or turn.get('status') != 'completed':
                 continue
@@ -76,6 +85,7 @@ def collect(root, audit_id, manager=None):
                     continue
                 result = manager._save_verdict(get_result(root, identifier), json.dumps(envelope['verdict'], ensure_ascii=False),
                                                state['thread_id'], turn['id'])
+                usage.save(root, state['thread_id'], turn['id'], identifier, state.get('usage_before'), usage_after)
                 queue_path = metadata_path(root, 'queue', identifier + '.json')
                 queue = read_json(queue_path)
                 if queue:

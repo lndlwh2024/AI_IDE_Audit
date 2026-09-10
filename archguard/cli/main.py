@@ -12,6 +12,9 @@ from archguard import __version__
 def cli(ctx, project_root):
     """IDE_Audit：协同维护、提交事实与独立审计。"""
     ctx.obj = project_root.resolve()
+    if ctx.invoked_subcommand in ('prompt', 'prepare', 'commit', 'retry-audit', 'drain'):
+        from archguard.project_control import require
+        execute(lambda: require(ctx.obj))
 
 
 def execute(action):
@@ -23,11 +26,22 @@ def execute(action):
 
 @cli.command()
 @click.option('--ide', default='codex-desktop', type=click.Choice(['codex', 'codex-desktop']))
+@click.option('--consent', is_flag=True, help='用户已明确授权当前项目；不能仅凭安装推断')
 @click.pass_obj
-def install(root, ide):
+def install(root, ide, consent):
     """安装统一守则、MCP 与提交 Hook。"""
+    if not consent:
+        raise click.ClickException('安装不等于项目授权。请在 A 明确同意开启后使用 install --consent。')
     from archguard.adapters.codex.installer import install_to_project
-    click.echo(json.dumps(execute(lambda: install_to_project(root, ide)), ensure_ascii=False))
+    from archguard.adapters.codex.session_manager import CodexSessionManager
+    from archguard.project_control import choose
+    def perform():
+        manager = CodexSessionManager(root)
+        with manager.client_factory() as client:
+            project_id = manager._project_id(client)
+        choose(root, project_id, True, confirmed=True)
+        return install_to_project(root, ide)
+    click.echo(json.dumps(execute(perform), ensure_ascii=False))
 
 
 @cli.command()
@@ -35,6 +49,8 @@ def install(root, ide):
 def uninstall(root):
     """卸载插件管理的入口，保留历史数据。"""
     from archguard.adapters.codex.installer import uninstall_from_project
+    from archguard.project_control import pause
+    execute(lambda: pause(root))
     click.echo(json.dumps(execute(lambda: uninstall_from_project(root)), ensure_ascii=False))
 
 
@@ -46,6 +62,11 @@ def audit(root, notify, json_output):
     """审计当前最后一次提交。"""
     from archguard.runtime import audit_project
     from archguard.core.report_generator import generate_report
+    from archguard.project_control import status, require
+    if notify and status(root)['status'] != 'enabled':
+        click.echo('IDE_Audit 未开启或暂停，本次提交不触发审计。')
+        return
+    execute(lambda: require(root))
     result = execute(lambda: audit_project(root))
     click.echo(result.model_dump_json(indent=2) if json_output else generate_report(result.model_dump(mode='json')))
     if notify:
@@ -164,6 +185,50 @@ def retry_audit(root, audit_id):
     """核验原轮次后恢复失败队列，不盲目重复发送。"""
     from archguard.dispatch_queue import retry
     click.echo(json.dumps(execute(lambda: retry(root, audit_id)), ensure_ascii=False))
+
+
+@cli.command('decline')
+@click.option('--confirmed', is_flag=True, help='用户已明确拒绝当前项目自动审计')
+@click.pass_obj
+def decline_command(root, confirmed):
+    if not confirmed:
+        raise click.ClickException('需要用户明确拒绝，不能代替用户选择')
+    from archguard.adapters.codex.session_manager import CodexSessionManager
+    from archguard.project_control import choose
+    def perform():
+        manager = CodexSessionManager(root)
+        with manager.client_factory() as client:
+            project_id = manager._project_id(client)
+        return choose(root, project_id, False, confirmed=True)
+    click.echo(json.dumps(execute(perform), ensure_ascii=False))
+
+
+@cli.command('project-status')
+@click.pass_obj
+def project_status(root):
+    from archguard.project_control import status
+    click.echo(json.dumps(status(root), ensure_ascii=False))
+
+
+@cli.command('pause')
+@click.pass_obj
+def pause_command(root):
+    from archguard.project_control import pause
+    click.echo(json.dumps(execute(lambda: pause(root)), ensure_ascii=False))
+
+
+@cli.command('resume')
+@click.pass_obj
+def resume_command(root):
+    from archguard.project_control import resume
+    click.echo(json.dumps(execute(lambda: resume(root)), ensure_ascii=False))
+
+
+@cli.command('usage')
+@click.pass_obj
+def usage_command(root):
+    from archguard.usage import refresh_current
+    click.echo(json.dumps(execute(lambda: refresh_current(root)), ensure_ascii=False))
 
 
 if __name__ == '__main__':

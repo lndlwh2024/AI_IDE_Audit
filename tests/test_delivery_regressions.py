@@ -4,6 +4,7 @@ from pathlib import Path
 
 import git
 import pytest
+from tests.control_helpers import authorize
 
 from archguard.adapters.codex.installer import install_to_project, uninstall_from_project
 from archguard.adapters.codex.session_manager import CodexSessionManager, AppServerError
@@ -24,8 +25,10 @@ def test_install_preserves_custom_configuration_and_hook(tmp_path):
     (tmp_path / '.codex').mkdir()
     (tmp_path / '.codex/config.toml').write_text('model = "custom"\n', encoding='utf-8')
     (tmp_path / 'AGENTS.md').write_text('# 用户规则\n', encoding='utf-8')
+    authorize(tmp_path)
     install_to_project(tmp_path)
     once = path.read_bytes()
+    authorize(tmp_path)
     install_to_project(tmp_path)
     assert path.read_bytes() == once
     uninstall_from_project(tmp_path)
@@ -57,6 +60,7 @@ def test_migration_dry_run_backup_and_install(tmp_path):
     result = migrate_assets(tmp_path)
     assert manifest(Path(result['backup'])) == before == manifest(source.parent)
     assert (tmp_path / '.ide_audit/collab/AUDIT_LOG.md').read_text(encoding='utf-8') == '历史资料'
+    authorize(tmp_path)
     install_to_project(tmp_path)
     uninstall_from_project(tmp_path)
     with pytest.raises(ValueError, match='已有资产'):
@@ -102,6 +106,8 @@ class FakeClient:
 
     def request(self, method, params):
         self.calls.append((method, params))
+        if method == 'account/usage/read':
+            return {'threadUsage': {'threadId': params['threadId'], 'groups': [{'totalTokens': 0}]}}
         if method.startswith('thread/'):
             return {'thread': {'id': 'real-protocol-shaped-id', 'cwd': params.get('cwd'), 'projectId': 'test-project'}}
         self.notifications = [
@@ -118,20 +124,22 @@ def verdict():
 
 
 def test_dispatch_is_readonly_and_completed_job_is_not_sent_twice(tmp_path):
+    authorize(tmp_path)
     client = FakeClient(verdict())
     manager = CodexSessionManager(tmp_path, client_factory=lambda: client)
     manager._config = lambda _: {}
     manager._project_id = lambda _: 'test-project'
     assert manager.audit(make_report()) == verdict()
     assert manager.audit(make_report()) == verdict()
-    assert [method for method, _ in client.calls] == ['thread/start', 'thread/name/set', 'turn/start']
+    assert [method for method, _ in client.calls if method != 'account/usage/read'] == ['thread/start', 'thread/name/set', 'turn/start']
     assert client.calls[0][1]['sandbox'] == 'read-only'
-    assert client.calls[2][1]['sandboxPolicy'] == {'type': 'readOnly'}
-    assert all(params['approvalPolicy'] == 'never' for method, params in client.calls if method != 'thread/name/set')
+    assert next(params for method, params in client.calls if method == 'turn/start')['sandboxPolicy'] == {'type': 'readOnly'}
+    assert all(params['approvalPolicy'] == 'never' for method, params in client.calls if method in ('thread/start', 'turn/start'))
 
 
 @pytest.mark.parametrize('issue', ['missing_file', 'unrelated_allowed', 'wrong_commit'])
 def test_invalid_verdict_is_rejected(tmp_path, issue):
+    authorize(tmp_path)
     result = verdict()
     if issue == 'missing_file':
         result['files'] = []
@@ -148,6 +156,7 @@ def test_invalid_verdict_is_rejected(tmp_path, issue):
 
 
 def test_uncertain_dispatch_cannot_silently_create_duplicate(tmp_path):
+    authorize(tmp_path)
     atomic_json(metadata_path(tmp_path, 'jobs', 'a' * 40, 'dispatch.json'),
                 {'status': 'sending', 'thread_id': 'original'})
     with pytest.raises(AppServerError, match='禁止自动重复'):

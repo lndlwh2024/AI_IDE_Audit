@@ -1,15 +1,12 @@
-"""插件之外的旧项目切换工具：默认预检，保留原始资产与独立回滚记录。"""
+"""插件之外的旧项目切换工具：默认预检，保留原始资产、单向切换。"""
 import argparse
 import copy
 import json
-import shutil
 from pathlib import Path
-from uuid import uuid4
-from datetime import datetime, timezone
 from legacy_sync_assets import manifest
 from archguard.sync.schemas import CodeGraph, LedgerEvent
 from archguard.storage import atomic_json, atomic_text, metadata_path
-from archguard.adapters.codex.installer import install_to_project, uninstall_from_project
+from archguard.adapters.codex.installer import install_to_project
 
 
 def convert(source):
@@ -69,119 +66,101 @@ def convert(source):
     return events, CodeGraph.model_validate(graph)
 
 
-def switch(root, apply=False):
+def switch(root, apply=False, consent=False):
+    """外部单向切换：保留全部旧资产，不维护回滚或双写。"""
     root = Path(root).resolve(strict=True)
     source = root / '.ai-sync'
     before = manifest(source)
     events, graph = convert(source)
     targets = [root / base / 'skills/dual-agent-sync' for base in ('.agents', '.codex', '.agent')]
     targets = [p for p in targets if p.exists()]
-    for path in targets:
-        if path.is_symlink() or path.resolve() != path or not path.resolve().is_relative_to(root):
-            raise ValueError('旧 Skill 是链接，请先人工停用该项目链接；不修改链接指向的共享 Skill')
-    for name in ('collab', 'codegraph'):
-        p = metadata_path(root, name)
-        if p.exists() and any(p.iterdir()):
-            raise ValueError('目标已有协同资产，禁止覆盖')
+    for target in targets:
+        if target.is_symlink() or target.resolve() != target:
+            raise ValueError('旧 Skill 是链接，不能改动共享目标')
     result = {'status': 'planned', 'events': len(events), 'nodes': len(graph.nodes),
-              'disable_skills': [p.relative_to(root).as_posix() for p in targets],
-              'source_retained': True, 'requires_a_graph_refresh': True}
+              'assets': before, 'disable_skills': [p.relative_to(root).as_posix() for p in targets],
+              'source_retained': True, 'requires_a_graph_refresh': True, 'rollback': False}
     if not apply:
         return result
-    record = metadata_path(root, 'cutover', uuid4().hex)
-    record.mkdir(parents=True)
-    shutil.copytree(source, record / 'source-backup')
-    if manifest(record / 'source-backup') != before or manifest(source) != before:
-        raise ValueError('备份或源资产发生变化，已停止切换')
-    saved = {}
-    for rel in ('AGENTS.md', '.codex/config.toml'):
-        p = root / rel
-        saved[rel] = p.read_text(encoding='utf-8') if p.exists() else None
-    receipt = dict(result, project_root=str(root), original_config=saved, status='prepared', source_hashes=before)
-    atomic_json(record / 'receipt.json', receipt)
-    moved = []
-    try:
-        for p in targets:
-            dest = record / 'disabled-skills' / p.relative_to(root)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            p.rename(dest)
-            moved.append((p, dest))
-        atomic_text(metadata_path(root, 'collab', 'ledger.jsonl'), ''.join(e.model_dump_json(by_alias=True)+'\n' for e in events))
-        atomic_json(metadata_path(root, 'codegraph', 'graph.json'), graph.model_dump(mode='json', by_alias=True))
-        from archguard.sync.ledger import LedgerManager
-        LedgerManager(root).rebuild_views()
-        install_to_project(root)
-        receipt['installed_config'] = {rel: manifest_file(root / rel) for rel in saved}
-        receipt['status'] = 'completed'
-        atomic_json(record / 'receipt.json', receipt)
-    except Exception:
-        for p, dest in reversed(moved):
-            if not p.exists(): dest.rename(p)
-        receipt['status'] = 'needs_rollback'
-        atomic_json(record / 'receipt.json', receipt)
-        raise
-    return dict(result, status='completed', receipt=str(record / 'receipt.json'))
-
-
-def manifest_file(path):
-    import hashlib
-    return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
-
-
-def rollback(receipt_path):
-    receipt_path = Path(receipt_path).resolve(strict=True)
-    receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
-    root = Path(receipt['project_root']).resolve(strict=True)
-    record = receipt_path.parent
-    if not record.is_relative_to(root / '.ide_audit/cutover'):
-        raise ValueError('回滚记录不属于目标项目')
-    if receipt.get('status') == 'rolled_back':
-        return {'status': 'rolled_back'}
-    for rel, old in receipt['original_config'].items():
-        if rel not in ('AGENTS.md', '.codex/config.toml'):
-            raise ValueError('非法配置回滚路径')
-        path = root / rel
-        if not path.resolve().is_relative_to(root):
-            raise ValueError('配置回滚路径重定向')
-        current = path.read_text(encoding='utf-8') if path.exists() else None
-        expected = receipt.get('installed_config', {}).get(rel)
-        if current != old and (expected is None or manifest_file(path) != expected):
-            raise ValueError('切换后配置被修改，须合并后再回滚')
-    uninstall_from_project(root)
-    for rel, old in receipt['original_config'].items():
-        path = root / rel
-        if old is None:
-            path.unlink(missing_ok=True)
-        else:
-            atomic_text(path, old)
-    for rel in receipt['disable_skills']:
-        if rel not in [base + '/skills/dual-agent-sync' for base in ('.agents', '.codex', '.agent')]:
-            raise ValueError('非法 Skill 回滚路径')
-        original = root / rel
-        saved = record / 'disabled-skills' / rel
-        if saved.exists():
-            if original.exists() or not original.parent.resolve().is_relative_to(root):
-                raise ValueError('Skill 恢复目标已有内容或被重定向')
-            saved.rename(original)
+    if not consent:
+        raise ValueError('实际切换须明确同意当前项目，使用 --apply --consent')
+    from archguard.adapters.codex.session_manager import CodexSessionManager
+    from archguard.project_control import choose
+    manager = CodexSessionManager(root)
+    with manager.client_factory() as client:
+        project_id = manager._project_id(client)
+    receipt_path = metadata_path(root, 'cutover', 'fast-switch.json')
+    previous = json.loads(receipt_path.read_text(encoding='utf-8')) if receipt_path.exists() else None
+    if previous and previous.get('source_hashes') != before:
+        raise ValueError('旧资产已变化，需核对后修复转换记录；不能覆盖')
     for name in ('collab', 'codegraph'):
-        source = metadata_path(root, name)
-        destination = record / 'rolled-back-assets' / name
+        target = metadata_path(root, name)
+        if not previous and target.exists() and any(target.iterdir()):
+            raise ValueError('已有新协同资产，禁止覆盖')
+    if previous and previous.get('status') in ('awaiting_a_validation', 'completed'):
+        return previous
+    record = dict(result, source_hashes=before, status='converting', project_root=str(root))
+    atomic_json(receipt_path, record)
+    # 原始目录完整保留；新数据仅转换必要格式，不复制或删改其他业务资产。
+    ledger_file = metadata_path(root, 'collab', 'ledger.jsonl')
+    graph_file = metadata_path(root, 'codegraph', 'graph.json')
+    ledger_text = ''.join(e.model_dump_json(by_alias=True)+'\n' for e in events)
+    graph_data = graph.model_dump(mode='json', by_alias=True)
+    if ledger_file.exists() and ledger_file.read_text(encoding='utf-8') != ledger_text:
+        raise ValueError('新账本已有变化，需在新数据上修复，不能重跑覆盖')
+    if graph_file.exists() and json.loads(graph_file.read_text(encoding='utf-8')) != graph_data:
+        raise ValueError('新图谱已有变化，需在新数据上修复，不能重跑覆盖')
+    atomic_text(ledger_file, ledger_text)
+    atomic_json(graph_file, graph_data)
+    from archguard.sync.ledger import LedgerManager
+    LedgerManager(root).rebuild_views()
+    choose(root, project_id, True, confirmed=True)
+    install_to_project(root)
+    if manifest(source) != before:
+        raise ValueError('切换期间旧写入者仍在修改资产，请停止旧工作流并核对')
+    # 停用入口但保留 Skill 文件，不恢复旧系统、不删除历史。
+    for target in targets:
+        destination = metadata_path(root, 'legacy-assets', 'disabled-skills', target.relative_to(root).as_posix())
         destination.parent.mkdir(parents=True, exist_ok=True)
-        if source.exists():
-            if not source.resolve().is_relative_to(root) or not destination.resolve().is_relative_to(record):
-                raise ValueError('资产回滚路径越界')
-            source.rename(destination)
-    receipt['status'] = 'rolled_back'
-    atomic_json(receipt_path, receipt)
-    return {'status': 'rolled_back', 'new_assets_retained': True}
+        if destination.exists():
+            raise ValueError('旧入口留存位置已存在，请核对后修复')
+        target.rename(destination)
+    record['status'] = 'awaiting_a_validation'
+    record['next'] = 'NEWS 的 A 完成图谱同步和真实提交验收；问题在新插件修复'
+    atomic_json(receipt_path, record)
+    return record
+
+
+def finalize(root):
+    root = Path(root).resolve(strict=True)
+    from archguard.project_control import require
+    from archguard.runtime import get_result
+    from archguard.storage import read_json
+    state = require(root)
+    receipt = metadata_path(root, 'cutover', 'fast-switch.json')
+    record = read_json(receipt)
+    if not record or record.get('status') not in ('awaiting_a_validation', 'completed'):
+        raise ValueError('尚未完成转换和入口切换')
+    if not state.get('checkpoint', {}).get('session_id'):
+        raise ValueError('必须由 A 完成接入同步')
+    if manifest(root / '.ai-sync') != record['source_hashes']:
+        raise ValueError('旧资产仍发生变化，请确认已停止旧写入者')
+    result = get_result(root)
+    dispatch = read_json(metadata_path(root, 'jobs', result.audit_id, 'dispatch.json'), {})
+    if dispatch.get('status') != 'completed' or not read_json(metadata_path(root, 'verdicts', result.audit_id + '.json')):
+        raise ValueError('必须先验证真实 B 审计结果')
+    record.update(status='completed', validated_audit=result.audit_id, thread_id=dispatch['thread_id'])
+    atomic_json(receipt, record)
+    return record
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='旧项目独立切换，默认只读预检')
-    parser.add_argument('--project-root')
-    parser.add_argument('--rollback', help='切换 receipt.json 路径')
-    parser.add_argument('--apply', action='store_true')
+    parser = argparse.ArgumentParser(description='插件外单向切换，默认只读预检，无回滚流程')
+    parser.add_argument('--project-root', required=True)
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument('--apply', action='store_true')
+    action.add_argument('--finalize', action='store_true')
+    parser.add_argument('--consent', action='store_true')
     args = parser.parse_args()
-    if not args.project_root and not args.rollback:
-        parser.error('需要 --project-root 或 --rollback')
-    print(json.dumps(rollback(args.rollback) if args.rollback else switch(args.project_root, args.apply), ensure_ascii=False, indent=2))
+    result = finalize(args.project_root) if args.finalize else switch(args.project_root, args.apply, args.consent)
+    print(json.dumps(result, ensure_ascii=True))

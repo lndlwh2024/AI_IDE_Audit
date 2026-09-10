@@ -102,6 +102,8 @@ def test_workflow_repairs_only_its_partial_append_and_advances_read_cursor(tmp_p
 
 
 def test_queue_orders_commits_and_recovers_without_resending(tmp_path, monkeypatch):
+    from tests.control_helpers import authorize
+    authorize(tmp_path)
     from archguard import dispatch_queue
     from archguard.storage import atomic_json, metadata_path
     from types import SimpleNamespace
@@ -135,6 +137,8 @@ def test_python_manual_semantics_survive_rescan(tmp_path):
 
 @pytest.mark.parametrize('terminal_retry', [False, True])
 def test_desktop_handoff_blocks_later_commits_until_collected(tmp_path, monkeypatch, terminal_retry):
+    from tests.control_helpers import authorize
+    authorize(tmp_path)
     from archguard import dispatch_queue
     from archguard.storage import atomic_json, metadata_path
     from archguard.adapters.codex.session_manager import AppServerError

@@ -11,6 +11,25 @@ def create_server(project_root, role='audit', audit_id=None):
     root = str(Path(project_root).resolve())
     app = MCPServer('ide-audit-' + role)
     bound_id = audit_id
+    from archguard import project_control as control
+
+    @app.tool(description='查看本项目已记录 B token 用量；未知不填零，不代表账户额度')
+    def get_token_usage() -> dict:
+        from archguard.usage import refresh_current
+        return refresh_current(root)
+
+    @app.tool(description='查询本项目是否获授权、暂停或等待 A 同步；不扫描源码')
+    def get_project_status() -> dict:
+        return control.status(root)
+
+    @app.tool(description='仅在用户明确要求暂停本项目插件时调用；保留数据和聊天')
+    def pause_project() -> dict:
+        return control.pause(root)
+
+    @app.tool(description='用户要求恢复已授权项目时调用；仅转为待 A 同步，B 不扫描项目')
+    def resume_project() -> dict:
+        return control.resume(root)
+
 
     def view():
         nonlocal bound_id
@@ -58,7 +77,7 @@ def create_server(project_root, role='audit', audit_id=None):
         def synchronized(function):
             @wraps(function)
             def wrapped(*args, **kwargs):
-                with transaction(root, 'workflow'):
+                with control.guarded(root), transaction(root, 'workflow'):
                     SyncWorkflow(root).recover()
                     return function(*args, **kwargs)
             return wrapped
@@ -71,7 +90,8 @@ def create_server(project_root, role='audit', audit_id=None):
         @app.tool(description='领取同一个原生 B 的待审计消息；A 必须原文发送至返回的任务 ID，不能代判或重复领取')
         def claim_desktop_audit(audit_id: str) -> dict:
             from archguard.adapters.codex.desktop_bridge import claim
-            return claim(root, audit_id)
+            with control.guarded(root):
+                return claim(root, audit_id)
 
         @app.tool(description='从真实 B 新轮次回收裁决，校验请求号、提交和逐文件覆盖；不接受 A 提供的裁决内容')
         def collect_desktop_audit(audit_id: str) -> dict:
@@ -83,11 +103,12 @@ def create_server(project_root, role='audit', audit_id=None):
 
         @app.tool(description='用稳定操作 ID 完成事件、图谱和派生视图交接；失败后相同参数重试不会重复记账')
         def complete_sync_operation(operation_id: str, event_data: dict, session_id: str | None = None) -> dict:
-            return SyncWorkflow(root).complete(operation_id, event_data, session_id)
+            with control.guarded(root):
+                return SyncWorkflow(root).complete(operation_id, event_data, session_id)
 
         @app.tool(description='恢复中断的协同交接，不重复追加原事件')
         def recover_sync_operation() -> dict:
-            with transaction(root, 'workflow'):
+            with control.guarded(root), transaction(root, 'workflow'):
                 return SyncWorkflow(root).recover() or {'status': 'idle'}
 
         def wake_queue():
@@ -153,7 +174,8 @@ def create_server(project_root, role='audit', audit_id=None):
 
         @app.tool(description='逐条记录原始用户需求，绑定记录时的 Git 基线')
         def record_prompt(prompt_text: str) -> dict:
-            return append_prompt(root, prompt_text)
+            with control.guarded(root):
+                return append_prompt(root, prompt_text)
 
         @app.tool(description='追加标准协同事件，自动维护账本流水和项目状态')
         @synchronized
@@ -167,27 +189,21 @@ def create_server(project_root, role='audit', audit_id=None):
                 raise ValueError('图谱变动引用不存在的账本版本')
             return GraphManager(root).sync(ide_id, trigger_version).model_dump(mode='json', by_alias=True)
 
-        @app.tool(description='A 首次接入：建立或刷新图谱后创建协同会话，返回会话 ID')
-        @synchronized
+        @app.tool(description='A 首次接入已授权项目：更新图谱和同步检查点，成功后才启用')
         def start_sync_session(ide_id: str) -> str:
-            from archguard.sync.cursor import valid_id
-            valid_id(ide_id)
-            GraphManager(root).sync(ide_id, 'v0000')
-            session_id = CursorManager(root).start_session(ide_id)
+            result = control.refresh_a(root, ide_id)
+            session_id = result['session_id']
             ready_sessions.add((ide_id, session_id))
             wake_queue()
             return session_id
 
-        @app.tool(description='A 再次接入已有会话：立即根据当前源码刷新原图谱，成功后允许编辑')
-        @synchronized
+        @app.tool(description='只有 A 执行：恢复已授权项目的图谱和代码信息同步；B 不可调用')
         def enter_sync_session(ide_id: str, session_id: str) -> dict:
-            if session_id not in CursorManager(root).read_cursor(ide_id).sessions:
-                raise ValueError('协同会话不存在，请先 start_sync_session')
             ready_sessions.discard((ide_id, session_id))
-            graph = GraphManager(root).sync(ide_id, 'v0000')
+            result = control.refresh_a(root, ide_id, session_id)
             ready_sessions.add((ide_id, session_id))
             wake_queue()
-            return graph.model_dump(mode='json', by_alias=True)
+            return result['graph']
 
         @app.tool(description='A 长时间编辑时续期自己持有的文件租约；失效时必须停止编辑并重新处理冲突')
         @synchronized
@@ -204,6 +220,7 @@ def create_server(project_root, role='audit', audit_id=None):
 
         @app.tool(description='任务开始和编辑前读取所有未读事件以及当前图谱')
         def get_sync_updates(ide_id: str, session_id: str) -> dict:
+            control.require(root)
             events, line = CursorManager(root).get_unread_events(ide_id, session_id)
             delivered[(ide_id, session_id)] = line
             return {'events': [e.model_dump(mode='json', by_alias=True) for e in events], 'last_line': line,
@@ -219,7 +236,8 @@ def create_server(project_root, role='audit', audit_id=None):
 
         @app.tool(description='提交前固定暂存树、需求与申报批次')
         def prepare_audit_commit() -> dict:
-            return prepare_commit(root)
+            with control.guarded(root):
+                return prepare_commit(root)
 
     return app
 
