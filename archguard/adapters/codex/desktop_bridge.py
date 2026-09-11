@@ -1,4 +1,5 @@
 """桌面已持有 B 时的原生派发交接；结果必须读取真实 B 的新轮次。"""
+from archguard.delivery import audit_packet
 import json
 from archguard import project_control as control
 from archguard import usage
@@ -9,8 +10,8 @@ from archguard.runtime import get_result, _key
 from .session_manager import AppServerError, CodexSessionManager, VERDICT_SCHEMA
 
 
-def verify_thread(manager, client, thread_id):
-    thread = client.request('thread/read', {'threadId': thread_id, 'includeTurns': True})['thread']
+def verify_thread(manager, client, thread_id, include_turns=True):
+    thread = client.request('thread/read', {'threadId': thread_id, 'includeTurns': include_turns})['thread']
     if Path(thread['cwd']).resolve() != manager.root or thread.get('projectId') != manager._project_id(client):
         raise AppServerError('桌面 B 的目录或项目归属不匹配')
     return thread
@@ -18,13 +19,14 @@ def verify_thread(manager, client, thread_id):
 
 def prepare_dispatch(manager, client, report, thread_id):
     thread = verify_thread(manager, client, thread_id)
+    client.request('thread/name/set', {'threadId':thread_id, 'name':'🔔' + manager.root.name + '项目审计窗口-' + str(read_json(manager.session_file, {}).get('sequence',1))})
     request_id = uuid4().hex
     template = (Path(__file__).parents[2] / 'templates/skill_codex_audit.md').read_text(encoding='utf-8')
     message = (template + '\n本轮是独立架构审计，不能代替 A 进行开发。以以下固定需求和提交证据裁决，'
                '不要用以往聊天扩张本轮授权。原生桌面允许读写，但本审计任务只需要读取证据和输出报告。\n'
                '最终仅输出一个 JSON 对象：{"request_id": "' + request_id + '", "verdict": <裁决对象>}。'
                '裁决对象必须符合以下 schema：\n' + json.dumps(VERDICT_SCHEMA, ensure_ascii=False) +
-               '\n固定提交事实包：\n' + report.model_dump_json())
+               '\n固定提交事实包：\n' + audit_packet(report))
     atomic_json(metadata_path(manager.root, 'jobs', report.audit_id, 'dispatch.json'), {
         'status': 'desktop_ready', 'thread_id': thread_id, 'request_id': request_id,
         'previous_turn_ids': [t['id'] for t in thread.get('turns', [])], 'message': message})

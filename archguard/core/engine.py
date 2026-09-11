@@ -45,8 +45,14 @@ def run_audit(project_root, commit_hash=None, snapshot=None):
     repo = git.Repo(project_root)
     before = graph_at_commit(repo, facts.base_commit)
     after = graph_at_commit(repo, facts.commit_hash)
+    changed = {f.path for f in facts.files} | {f.rename_from for f in facts.files if f.rename_from}
+    archived = {p for p,n in snapshot.get('declared_graph', {}).get('nodes', {}).items() if n.get('status') == 'non_active'}
     for graph in (before, after):
-        diagnostics.extend(dict(d, component='graph') for d in graph.get('diagnostics', []))
+        for d in graph.get('diagnostics', []):
+            if d.get('file') in archived and d.get('file') not in changed:
+                graph.setdefault('coverage_warnings', []).append(dict(d, reason='未改动的非活跃历史文件，未验证解析'))
+            else:
+                diagnostics.append(dict(d, component='graph'))
     signals = detect_signals(facts, load_default_rules())
     ledger = verify_ledger_consistency(facts, snapshot.get('ledger_events', []))
     return AuditResult(audit_id=facts.commit_hash, timestamp=datetime.now(timezone.utc).isoformat(),

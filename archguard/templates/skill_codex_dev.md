@@ -23,3 +23,18 @@
 用户明确拒绝首次开启时，用 `archguard --project-root <当前项目> decline --confirmed` 保存选择，后续不重复询问。该命令必须在用户明确拒绝后执行。
 
 尚未安装项目运行环境时，明确拒绝可用插件内 `python <插件目录>/scripts/session_start.py --decline --confirmed --project-root <当前项目>` 留存选择，不需要下载依赖。
+
+
+## 用量与增量交接（0.4.1，优先执行）
+
+A 在首次同步、修改前核对账本、commit 后更新图谱/账本这三个阶段，先用当前真实 Codex 任务 ID 调用 begin_token_phase，phase 分别为 initial_sync / before_edit / after_commit。阶段完成或失败后立即 finish_token_phase，并原样打印 display（本次及本窗口累计 token）；不要等整轮开发结束才汇报。结果是宿主已观测区间，最终回复尚未结算时如实说明，不用额度百分比换算 token。不应重复输出完整用量日志。
+
+get_sync_updates 默认分页；阅读并确认当前页后才继续下一页。无新事件时不要读取全账本或全图。enter_sync_session、sync_graph、prepare_audit_commit 返回摘要，完整数据已保存本地，不要为了拿到完整 JSON 再用 shell 打印它们。只在本次任务确实缺证时按文件取局部图谱；不要反复重做迁移资产核对。新任务创建新协同游标可能需读取历史；恢复原任务必须复用已有 session_id，不要每次 start 新会话。
+
+B 完成后立即 get_token_usage 并展示本轮和 B 窗口累计。B 名称为 🔔<项目名>项目审计窗口-<序号>，归档或确实删除后新建才递增，新 B 不回放旧聊天。证据包超过预算时停止并报告，不绕过限制把整个文件包直接塞进对话。保留同一 B 会话也会携带历史上下文，不能承诺其输入开销永远恒定。
+
+提交前通过 complete_sync_operation 维护图谱/账本也需独立计量，phase=prepare_commit，完成后立即打印。用量不可用不阻断已授权同步。若手工命令环境返回空 Codex 项目列表，优先使用宿主 MCP；需要本地执行权限时走宿主审批，不移除项目校验、不反复扫描。
+
+若单条事件超过分页预算，用 get_sync_event_chunk 从 offset=0 顺序读取 next_offset，complete=true 后才 acknowledge_sync，不能跳段或整条打印绕过预算。
+
+为减少长上下文的重复模型调用，宿主支持工具编排时，将 begin_token_phase 与该阶段第一个业务调用放在同一次编排中顺序执行，将最后一个业务调用与 finish_token_phase 放在同一次编排中顺序执行；涉及阅读理解或用户授权的步骤不能盲目批量确认。累计数为宿主当前计数，计数器重置前的历史不宣称完整覆盖。

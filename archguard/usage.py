@@ -22,16 +22,37 @@ def rollout_snapshot(root, client, thread_id):
         raw_path = raw_path[len(prefix):]
     log = Path(raw_path)
     home = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))).resolve()
-    if log.is_symlink() or not log.resolve().is_relative_to(home) or log.stat().st_size > 128 * 1024 * 1024:
+    if log.is_symlink() or not log.resolve().is_relative_to(home):
         raise ValueError('B 用量日志路径或大小不受支持')
     mapping = dict(zip(FIELDS, ('input_tokens', 'output_tokens', 'cached_input_tokens',
                                'reasoning_output_tokens', 'total_tokens')))
-    latest, current, baseline, turns = None, None, None, {}
+    cache_path = metadata_path(root, 'usage-cache', hashlib.sha256(thread_id.encode()).hexdigest() + '.json')
+    cached = read_json(cache_path, {})
+    stat = log.stat()
+    fingerprint = [str(log.resolve()), stat.st_dev, stat.st_ino]
+    if cached.get('fingerprint') != fingerprint or cached.get('offset', 0) > stat.st_size:
+        cached = {}
+    if cached.get('offset'):
+        with log.open('rb') as check:
+            check.seek(max(0, cached['offset'] - 256))
+            if hashlib.sha256(check.read(min(256, cached['offset']))).hexdigest() != cached.get('tail_hash'):
+                cached = {}
+    latest, current, baseline, turns = cached.get('latest'), cached.get('current'), cached.get('baseline'), cached.get('turns', {})
     verified = False
-    with log.open(encoding='utf-8') as stream:
-        for line in stream:
-            if not line.endswith('\n'):
+    offset = cached.get('offset', 0)
+    with log.open('rb') as stream:
+        first = json.loads(stream.readline())
+        if first.get('type') != 'session_meta':
+            raise ValueError('用量日志缺少宿主身份头')
+        header = first.get('payload', {})
+        if header.get('id') != thread_id or Path(header.get('cwd', '')).resolve() != Path(root).resolve():
+            raise ValueError('B 日志头不匹配')
+        verified = True
+        stream.seek(offset)
+        for line in iter(stream.readline, b''):
+            if not line.endswith(b'\n'):
                 break  # 正在追加的半行不作为证据。
+            offset = stream.tell()
             entry = json.loads(line)
             payload = entry.get('payload', {})
             if entry.get('type') == 'session_meta':
@@ -64,6 +85,11 @@ def rollout_snapshot(root, client, thread_id):
                                   and latest[k] >= baseline[k] else None for k in FIELDS}
     if not verified or latest is None:
         raise ValueError('B 日志没有可用 token 统计')
+    turns = dict(list(turns.items())[-200:])
+    with log.open('rb') as check:
+        check.seek(max(0, offset - 256))
+        tail_hash = hashlib.sha256(check.read(min(256, offset))).hexdigest()
+    atomic_json(cache_path, {'tail_hash':tail_hash, 'fingerprint':fingerprint, 'offset':offset, 'latest':latest, 'current':current, 'baseline':baseline, 'turns':turns})
     return {'counts': latest, 'per_turn': turns, 'status': 'observed',
             'source': 'codex-rollout-token_count', 'compatibility': '宿主日志格式不稳定，失败显示未知',
             'observed_at': time.time()}
@@ -108,7 +134,7 @@ def save(root, thread_id, turn_id, audit_id, before, after, kind='audit'):
             delta = observed_turn
         record['turns'][turn_id] = {'turn_id': turn_id, 'audit_id': audit_id, 'kind': kind,
             'counts': delta, 'status': 'observed_interval' if delta['totalTokens'] is not None else 'unknown',
-            'note': '宿主前后快照区间差值，可能存在统计延迟；不等同账单', 'before': before, 'after': after}
+            'note': '宿主前后快照区间差值，可能存在统计延迟；不等同账单', 'before': {k:v for k,v in (before or {}).items() if k != 'per_turn'}, 'after': {k:v for k,v in after.items() if k != 'per_turn'}}
         if after.get('status') == 'observed':
             record['latest'] = after
         atomic_json(path(root, thread_id), record)
@@ -148,7 +174,7 @@ def refresh_current(root):
     manager = CodexSessionManager(root)
     try:
         with manager.client_factory() as client:
-            verify_thread(manager, client, thread_id)
+            verify_thread(manager, client, thread_id, include_turns=False)
             snapshot = capture(root, client, thread_id)
     except Exception as exc:
         snapshot = {'status': 'unknown', 'reason': str(exc), 'observed_at': time.time()}

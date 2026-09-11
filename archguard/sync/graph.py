@@ -3,6 +3,7 @@ import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from archguard.core.codegraph import build_graph
+from archguard.core.source_text import decode_python
 from archguard.core.graph_analyzer import detect_topology_changes
 from archguard.storage import metadata_path, atomic_json, atomic_text, read_json, transaction
 from .schemas import CodeGraph, GraphMeta, GraphDiff
@@ -45,10 +46,25 @@ class GraphManager:
         cache = {'files': {}, 'parsed': dict(previous_cache.get('parsed', {}))}
         files_read = 0
         ignored = {'.git', '.ide_audit', '.ai-sync', '.pytest_cache', '.venv', 'venv', 'env', 'node_modules', '__pycache__', 'build', 'dist'}
+        # 已跟踪文件不因通用构建目录名称而丢失；插件元数据始终排除。
+        tracked = set()
+        try:
+            import git
+            repo = git.Repo(self.project_root)
+            tracked = set(repo.git.ls_files(z=True).split('\0')) - {''}
+        except (git.InvalidGitRepositoryError, git.NoSuchPathError):
+            pass
+        tracked_dirs = {str(parent).replace('\\', '/') for name in tracked for parent in Path(name).parents}
+        artifacts = {'.pnpm-store', '.next', '.nuxt', '.mypy_cache', '.ruff_cache', '.tox'}
+        def excluded(directory, name):
+            relative = (Path(directory) / name).relative_to(self.project_root).as_posix()
+            if name in {'.git', '.ide_audit', '.ai-sync'}:
+                return True
+            return relative not in tracked_dirs and (name in ignored or name in artifacts or name.startswith(('.tmp-', 'release-build-')))
         # 仅相对路径参与排除判断，祖先目录名不影响用户工程。
         import os
         for directory, dirs, files in os.walk(self.project_root):
-            dirs[:] = [d for d in dirs if d not in ignored and not (Path(directory) / d).is_symlink()]
+            dirs[:] = [d for d in dirs if not excluded(directory, d) and not (Path(directory) / d).is_symlink()]
             for name in files:
                 path = Path(directory) / name
                 if not path.is_symlink():
@@ -61,8 +77,8 @@ class GraphManager:
                     else:
                         files_read += 1
                         try:
-                            content = path.read_text(encoding='utf-8-sig') if path.suffix == '.py' else ''
-                        except UnicodeDecodeError:
+                            content = decode_python(path.read_bytes()) if path.suffix == '.py' else ''
+                        except (UnicodeError, SyntaxError):
                             raise ValueError(f'Python 文件编码不受支持: {path}')
                         after = path.stat()
                         if signature != [after.st_size, after.st_mtime_ns, after.st_ctime_ns]:

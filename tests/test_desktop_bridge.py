@@ -15,6 +15,8 @@ class Client:
     def __enter__(self): return self
     def __exit__(self, *_): pass
     def request(self, method, params):
+        if method == 'thread/name/set':
+            self.thread['name'] = params['name']; return {}
         if method == 'thread/read': return {'thread':self.thread}
         if method == 'project/list': return {'data':[{'id':'project','roots':[{'path':self.thread['cwd']}]}]}
         if method == 'thread/resume':
@@ -38,6 +40,7 @@ def test_active_writer_routes_to_same_native_b(tmp_path):
     manager,client,report=setup_manager(tmp_path)
     result=manager.audit(report)
     assert result=={'desktop_dispatch_required':True,'thread_id':'native-b'}
+    assert client.thread['name'] == '🔔' + tmp_path.name + '项目审计窗口-2'
     request=desktop_bridge.claim(tmp_path,report.audit_id,manager)
     assert request['ready'] and request['thread_id']=='native-b'
     with pytest.raises(AppServerError,match='不能重复'):

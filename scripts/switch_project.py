@@ -97,7 +97,7 @@ def switch(root, apply=False, consent=False):
         target = metadata_path(root, name)
         if not previous and target.exists() and any(target.iterdir()):
             raise ValueError('已有新协同资产，禁止覆盖')
-    if previous and previous.get('status') in ('awaiting_a_validation', 'completed'):
+    if previous and previous.get('status') in ('awaiting_a_validation', 'awaiting_b_validation', 'completed'):
         return previous
     record = dict(result, source_hashes=before, status='converting', project_root=str(root))
     atomic_json(receipt_path, record)
@@ -139,7 +139,7 @@ def finalize(root):
     state = require(root)
     receipt = metadata_path(root, 'cutover', 'fast-switch.json')
     record = read_json(receipt)
-    if not record or record.get('status') not in ('awaiting_a_validation', 'completed'):
+    if not record or record.get('status') not in ('awaiting_a_validation', 'awaiting_b_validation', 'completed'):
         raise ValueError('尚未完成转换和入口切换')
     if not state.get('checkpoint', {}).get('session_id'):
         raise ValueError('必须由 A 完成接入同步')

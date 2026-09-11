@@ -22,6 +22,6 @@ python <外部工具目录>/switch_project.py --project-root H:/AIcode/Trae/news
 python <外部工具目录>/switch_project.py --project-root H:/AIcode/Trae/news --finalize
 ```
 
-安装 MCP 会绑定执行此脚本的 Python，因此运行环境需长期保留；不要使用即将删除的临时目录。切换记录位于 `.ide_audit/cutover/fast-switch.json`，转换后为 awaiting_a_validation，验证后为 completed。重复运行不会覆盖已经由 A 更新的新资产。全局 Skill 不自动卸载，以免影响其他项目；NEWS 的新守则明确禁止再运行旧 Skill。
+安装 MCP 会绑定执行此脚本的 Python，因此运行环境需长期保留；不要使用即将删除的临时目录。切换记录位于 `.ide_audit/cutover/fast-switch.json`，转换后为 awaiting_a_validation；A 已验证但真实 B 待验证时可记录 awaiting_b_validation，全部验证后为 completed。重复运行不会覆盖已经由 A 更新的新资产。全局 Skill 不自动卸载，以免影响其他项目；NEWS 的新守则明确禁止再运行旧 Skill。
 
 旧版本转换为 v0001 起算并保留 legacy_version；结构化模块保存为 module_details，符号及额外依赖保留。未知旧事件保留原类型并作为历史 handoff；缺失图谱明细明确标注，不编造。旧未封存事件不授权首次新提交。
