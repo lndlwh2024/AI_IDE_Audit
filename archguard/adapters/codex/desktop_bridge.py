@@ -24,7 +24,7 @@ def prepare_dispatch(manager, client, report, thread_id):
     template = (Path(__file__).parents[2] / 'templates/skill_codex_audit.md').read_text(encoding='utf-8')
     message = (template + '\n本轮是独立架构审计，不能代替 A 进行开发。以以下固定需求和提交证据裁决，'
                '不要用以往聊天扩张本轮授权。原生桌面允许读写，但本审计任务只需要读取证据和输出报告。\n'
-               '最终仅输出一个 JSON 对象：{"request_id": "' + request_id + '", "verdict": <裁决对象>}。'
+               '最终先输出完整人读报告，末尾以折叠附录内唯一 json 代码块附上机器对象：{"request_id": "' + request_id + '", "verdict": <裁决对象>}。'
                '裁决对象必须符合以下 schema：\n' + json.dumps(VERDICT_SCHEMA, ensure_ascii=False) +
                '\n固定提交事实包：\n' + audit_packet(report))
     atomic_json(metadata_path(manager.root, 'jobs', report.audit_id, 'dispatch.json'), {
@@ -80,7 +80,8 @@ def collect(root, audit_id, manager=None):
                 if text.startswith('```json') and text.endswith('```'):
                     text = text[7:-3].strip()
                 try:
-                    envelope = json.loads(text)
+                    from archguard.presentation import parse_result
+                    envelope = parse_result(text)
                 except ValueError:
                     continue
                 if not isinstance(envelope, dict) or envelope.get('request_id') != state['request_id']:

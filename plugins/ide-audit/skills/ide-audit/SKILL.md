@@ -76,3 +76,10 @@ A 可使用 initial_sync、before_edit、align_updates、edit_lock、record_chan
 get_operation_usage_log 分页取摘要（最多 20 条），不要把完整日志放入模型上下文。实际用量记录含输入、缓存输入、输出和累计；缓存输入属于输入的一部分，不能再次相加。B 日志按 thread_id + turn_id 去重；不同或重叠阶段不能相加作为费用。响应字符只是新增数据规模，不是模型总输入；长 A 上下文仍可能使每次调用昂贵。
 
 继续已提交但送审失败的任务，含义是对原 audit_id 查询状态、核对未派发后 retry-audit；不撤销、不新增、不修改原 commit，不改写封存账本。单次明确错误按原因处理，不在业务 A 中反复调试插件。
+
+
+## 0.4.4 完整报告与用量绑定
+
+A 记录各阶段 measurement_id，prepare_audit_commit(measurement_ids=[本轮各阶段ID]) 时一起封存，提交后 begin_token_phase 传目标 audit_id。否则报告无法准确归属该阶段，应显示未绑定，不能拿其他开发计数补填。同阶段多区间分行展示，不强行相加。零字节新文件必须记文件事件；有新增内容必须申报实际行范围。无修改不得制造事件。
+
+派发前可 estimate_audit_usage 获取证据载荷预测；这是字符启发式，不是包括旧上下文的总消耗。B 已完成时必须 get_final_audit_report 并完整展示 markdown，包含审计一、审计二、最终结论和 token 表；不要只打印 JSON 或一句“合理/不合理”。已完成的历史裁决只需重新排版，不再发送给 B 重审。缺失历史用量标记未知，不补造。

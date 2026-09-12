@@ -27,14 +27,14 @@ def get_result(project_root, audit_id=None):
     return AuditResult.model_validate(value)
 
 
-def prepare_commit(project_root):
+def prepare_commit(project_root, measurement_ids=None):
     from archguard.sync.workflow import SyncWorkflow
     with transaction(project_root, 'workflow'):
         SyncWorkflow(project_root).recover()
-        return _prepare_commit(project_root)
+        return _prepare_commit(project_root, measurement_ids)
 
 
-def _prepare_commit(project_root):
+def _prepare_commit(project_root, measurement_ids=None):
     """在 commit 前固定暂存树，供 post-commit 匹配，不提前猜测提交 SHA。"""
     repo = git.Repo(project_root)
     try:
@@ -45,7 +45,13 @@ def _prepare_commit(project_root):
         pending = get_pending_prompts(project_root)
         from archguard.project_control import status
         events = LedgerManager(project_root).read_all_events()[status(project_root).get('ledger_floor', 0):]
-        batch = {'base_commit': base, 'tree': repo.git.write_tree(),
+        for identifier in measurement_ids or []:
+            if not re.fullmatch(r'[0-9a-f]{32}', identifier):
+                raise ValueError('非法用量标识')
+            record = read_json(metadata_path(project_root, 'usage-phases', identifier + '.json'), {})
+            if record.get('role') != 'A' or record.get('base_commit') != base:
+                raise ValueError('用量阶段不属于当前 A 开发基线')
+        batch = {'usage_measurement_ids': list(measurement_ids or []), 'base_commit': base, 'tree': repo.git.write_tree(),
                  'prompts': [p for p in pending if 'base_commit' in p and p['base_commit'] == base],
                  'ledger_events': [e.model_dump(mode='json', by_alias=True) for e in events
                                    if e.git.base_commit == base and e.git.head_commit is None],
@@ -91,7 +97,7 @@ def audit_project(project_root, commit_hash=None):
             previous = read_json(metadata_path(root, 'jobs', base, 'input.json'), {}) if base else {}
             snapshot = {'head_commit': sha, 'base_commit': base, 'prompts': prompts, 'ledger_events': events,
                         'declared_graph': declared_graph, 'declared_graph_before': previous.get('declared_graph', {}),
-                        'diagnostics': diagnostics}
+                        'diagnostics': diagnostics, 'usage_measurement_ids': prepared.get('usage_measurement_ids', []) if prepared.get('tree') == head.tree.hexsha and prepared.get('base_commit') == base else []}
             snapshot['input_hash'] = hashlib.sha256(json.dumps(snapshot, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
             atomic_json(snapshot_file, snapshot)
         expected = snapshot.get('input_hash')

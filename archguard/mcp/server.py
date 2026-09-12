@@ -63,9 +63,9 @@ def create_server(project_root, role='audit', audit_id=None):
         return compact_b(root)
 
     @tool(description='A 在检查账本/图谱前或提交后维护前，B 在审计前记录用量起点；传当前真实 Codex 任务 ID')
-    def begin_token_phase(thread_id: str, phase: str) -> dict:
+    def begin_token_phase(thread_id: str, phase: str, audit_id: str | None = None) -> dict:
         from archguard.phase_usage import begin
-        return begin(root, thread_id, phase, 'A' if role == 'dev' else 'B')
+        return begin(root, thread_id, phase, 'A' if role == 'dev' else 'B', audit_id=audit_id)
 
     @tool(description='阶段完成后立即读取本次与本窗口累计 token；把 display 原样展示给用户，未知不猜测')
     def finish_token_phase(measurement_id: str) -> dict:
@@ -98,6 +98,26 @@ def create_server(project_root, role='audit', audit_id=None):
     @tool(description='读取绑定提交的客观事实包，不重新执行或写入审计')
     def audit_changes() -> dict:
         return json.loads(audit_packet(view()))
+
+    @tool(description='生成四段式人读报告，传 B 已完成的裁决；仅排版和读取本地计数，不代替 B 判断。最终正文展示 markdown，机器对象放附录')
+    def format_audit_report(verdict: dict) -> dict:
+        from archguard.presentation import render
+        return {'markdown': render(root, view(), verdict)}
+
+    @tool(description='读取已回收 B 裁决，生成最终四段报告和当前已结算用量；不得仅展示裸 JSON')
+    def get_final_audit_report() -> dict:
+        from archguard.presentation import render
+        from archguard.storage import read_json, metadata_path
+        result = view()
+        verdict = read_json(metadata_path(root, 'verdicts', result.audit_id + '.json'))
+        if verdict is None:
+            raise ValueError('B 裁决尚未回收，不能生成最终报告')
+        return {'markdown': render(root, result, verdict)}
+
+    @tool(description='预测绑定提交新增证据文本 token 范围；不包含历史、系统工具与输出，不是实际消耗')
+    def estimate_audit_usage() -> dict:
+        from archguard.presentation import estimate
+        return estimate(audit_packet(view()))
 
     @tool(description='读取绑定提交的代码图谱快照')
     def get_architecture_graph(file_paths: list[str] | None = None) -> dict:
@@ -334,9 +354,9 @@ def create_server(project_root, role='audit', audit_id=None):
             return {'last_read_line': last_line}
 
         @tool(description='提交前固定暂存树、需求与申报批次')
-        def prepare_audit_commit() -> dict:
+        def prepare_audit_commit(measurement_ids: list[str] | None = None) -> dict:
             with control.guarded(root):
-                return prepared_summary(prepare_commit(root))
+                return prepared_summary(prepare_commit(root, measurement_ids))
 
     return app
 

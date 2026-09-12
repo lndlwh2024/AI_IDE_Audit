@@ -48,7 +48,7 @@ def test_active_writer_routes_to_same_native_b(tmp_path):
     state=read_json(metadata_path(tmp_path,'jobs',report.audit_id,'dispatch.json'))
     nonce=state['request_id']
     client.thread['turns'].append({'id':'new','status':'completed','items':[{'type':'agentMessage',
-        'text':json.dumps({'request_id':nonce,'verdict':verdict()})}]})
+        'text':'# 审计报告\n```json\n'+json.dumps({'request_id':nonce,'verdict':verdict()})+'\n```'}]})
     assert desktop_bridge.collect(tmp_path,report.audit_id,manager)==verdict()
     assert read_json(manager.session_file)['sequence']==2
     assert desktop_bridge.collect(tmp_path,report.audit_id,manager)==verdict()

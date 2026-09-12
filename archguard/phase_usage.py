@@ -25,7 +25,7 @@ def snapshot(root, thread_id):
                 'source':'host-unavailable', 'reason':str(exc)}
 
 
-def begin(root, thread_id, phase, role):
+def begin(root, thread_id, phase, role, audit_id=None):
     control.require(root, initializing=True)
     if phase not in ('initial_sync', 'before_edit', 'prepare_commit', 'after_commit', 'audit', 'align_updates', 'edit_lock', 'record_changes', 'graph_update', 'edit_unlock', 'dispatch'):
         raise ValueError('未知操作阶段')
@@ -34,11 +34,19 @@ def begin(root, thread_id, phase, role):
     current_b = read_json(metadata_path(root, 'session.json'), {}).get('thread_id')
     if (role == 'B' and thread_id != current_b) or (role == 'A' and thread_id == current_b):
         raise ValueError('用量任务与 A/B 身份不符')
+    if audit_id is not None:
+        from archguard.runtime import get_result
+        audit_id = get_result(root, audit_id).audit_id
     value = snapshot(root, thread_id)
     value.pop('per_turn', None)
+    import git
+    try:
+        base_commit = git.Repo(root).head.commit.hexsha
+    except (git.InvalidGitRepositoryError, ValueError):
+        base_commit = None
     identifier = uuid4().hex
     atomic_json(metadata_path(root, 'usage-phases', identifier + '.json'),
-                {'id':identifier, 'thread_id':thread_id, 'role':role, 'phase':phase, 'before':value, 'started_at':time.time(), 'status':'started'})
+                {'id':identifier, 'audit_id':audit_id, 'base_commit':base_commit, 'thread_id':thread_id, 'role':role, 'phase':phase, 'before':value, 'started_at':time.time(), 'status':'started'})
     return {'measurement_id':identifier, 'status':value['status'], 'note':'统计当前阶段的模型交互区间；本地 Python 扫描本身不调用模型'}
 
 
