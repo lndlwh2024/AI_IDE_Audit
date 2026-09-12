@@ -22,7 +22,13 @@ def install_post_commit_hook(project_root):
     manifest_path = metadata_path(root, 'hook-install.json')
     manifest = read_json(manifest_path)
     if manifest:
-        if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() == manifest['installed_hash']:
+        if str(path) == manifest['path'] and path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() == manifest['installed_hash']:
+            # 仅升级仍与安装记录一致的旧 Hook，保留原 Hook 链和备份。
+            content = path.read_text(encoding='utf-8')
+            updated = content if ' -X utf8 -m archguard.cli.main ' in content else content.replace(' -m archguard.cli.main ', ' -X utf8 -m archguard.cli.main ')
+            if updated != content:
+                atomic_text(path, updated)
+                atomic_json(manifest_path, dict(manifest, installed_hash=hashlib.sha256(path.read_bytes()).hexdigest()))
             return True
         raise ValueError('已安装 Hook 被外部修改，请先合并，禁止覆盖')
     previous = path.with_name('post-commit.ide-audit.previous')
@@ -38,7 +44,7 @@ def install_post_commit_hook(project_root):
         content += f'{shlex.quote(previous.as_posix())} "$@"\nprevious_status=$?\n'
     else:
         content += 'previous_status=0\n'
-    content += (f'{shlex.quote(Path(sys.executable).as_posix())} -m archguard.cli.main '
+    content += (f'{shlex.quote(Path(sys.executable).as_posix())} -X utf8 -m archguard.cli.main '
                 f'--project-root {shlex.quote(root.as_posix())} audit --notify\n'
                 'audit_status=$?\n'
                 'if [ "$audit_status" -ne 0 ]; then echo "IDE_Audit: audit failed; retry with archguard audit" >&2; fi\n'

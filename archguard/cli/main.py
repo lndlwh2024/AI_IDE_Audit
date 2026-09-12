@@ -1,5 +1,6 @@
 """统一命令入口，失败始终使用非零退出状态。"""
 import json
+import sys
 from pathlib import Path
 import click
 from archguard import __version__
@@ -11,6 +12,9 @@ from archguard import __version__
 @click.pass_context
 def cli(ctx, project_root):
     """IDE_Audit：协同维护、提交事实与独立审计。"""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='backslashreplace')
     ctx.obj = project_root.resolve()
     if ctx.invoked_subcommand in ('prompt', 'prepare', 'commit', 'retry-audit', 'drain'):
         from archguard.project_control import require
@@ -68,10 +72,17 @@ def audit(root, notify, json_output):
         return
     execute(lambda: require(root))
     result = execute(lambda: audit_project(root))
-    click.echo(result.model_dump_json(indent=2) if json_output else generate_report(result.model_dump(mode='json')))
     if notify:
         from archguard.dispatch_queue import enqueue
-        click.echo(json.dumps(execute(lambda: enqueue(root, result.audit_id)), ensure_ascii=False))
+        queued = execute(lambda: enqueue(root, result.audit_id))
+        # 入队先于终端展示；Hook 默认仅给摘要，完整报告已在本地封存。
+        if json_output:
+            click.echo(result.model_dump_json(indent=2))
+        else:
+            click.echo(json.dumps({'audit_id':result.audit_id, 'analysis_status':result.analysis_status,
+                                   'queue_status':queued['status']}, ensure_ascii=True))
+    else:
+        click.echo(result.model_dump_json(indent=2) if json_output else generate_report(result.model_dump(mode='json')))
 
 
 @cli.command()

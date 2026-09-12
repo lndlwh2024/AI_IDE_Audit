@@ -59,10 +59,12 @@ def finish(root, identifier, role):
             record.update(status='completed', after=after, counts=counts)
             atomic_json(path, record)
         total = record.get('after',{}).get('counts',{}).get('totalTokens')
-        n = record['counts']['totalTokens']
+        observed_delta = record['counts']['totalTokens']
+        n = observed_delta if observed_delta != 0 else None
         return {'role':role, 'phase':record['phase'], 'this_phase_tokens':n, 'thread_total_tokens':total,
+                'observed_interval_delta':observed_delta, 'settlement':'no_new_observation' if observed_delta == 0 else 'observed_interval',
                 'counts':record['counts'], 'source':record.get('after',{}).get('source'),
-                'display':f"{role} · {record['phase']}：本次 {n if n is not None else '未知'} token；本窗口累计（宿主当前计数）{total if total is not None else '未知'} token",
+                'display':f"{role} · {record['phase']}：本次 {n if n is not None else '待结算/未知'} token；本窗口累计（宿主当前计数）{total if total is not None else '未知'} token",
                 'scope':'累计是宿主当前计数；计数器重置前的历史不保证完整。截至最近宿主统计；包含此阶段交互携带的上下文，不含尚未结算的最终回复，不代表费用或额度百分比'}
 
 

@@ -5,6 +5,7 @@ from functools import wraps
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver import MCPServer
 from archguard.runtime import get_result, prepare_commit
+from archguard.sync.schemas import OperationEvent
 from archguard.delivery import graph_summary, graph_slice, prepared_summary, audit_packet
 import json
 
@@ -46,7 +47,10 @@ def create_server(project_root, role='audit', audit_id=None):
 
     @tool(description='查询本项目是否获授权、暂停或等待 A 同步；不扫描源码')
     def get_project_status() -> dict:
-        return control.status(root)
+        state = control.status(root)
+        if role == 'dev':
+            state = dict(state, ready_sync_sessions=[{'ide_id':i, 'session_id':s} for i,s in sorted(ready_sessions)])
+        return state
 
     @tool(description='仅在用户明确要求暂停本项目插件时调用；保留数据和聊天')
     def pause_project() -> dict:
@@ -133,9 +137,9 @@ def create_server(project_root, role='audit', audit_id=None):
             return result
 
         @tool(description='用稳定操作 ID 完成事件、图谱和派生视图交接；失败后相同参数重试不会重复记账')
-        def complete_sync_operation(operation_id: str, event_data: dict, session_id: str | None = None) -> dict:
+        def complete_sync_operation(operation_id: str, event_data: OperationEvent, session_id: str | None = None) -> dict:
             with control.guarded(root):
-                return SyncWorkflow(root).complete(operation_id, event_data, session_id)
+                return SyncWorkflow(root).complete(operation_id, event_data.model_dump(mode="json", by_alias=True), session_id)
 
         @tool(description='恢复中断的协同交接，不重复追加原事件')
         def recover_sync_operation() -> dict:

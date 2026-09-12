@@ -150,3 +150,8 @@ class LedgerEvent(BaseModel):
     context: ContextInfo
     verification: VerificationInfo
     summary: str
+
+
+class OperationEvent(LedgerEvent):
+    """MCP 暴露完整字段结构，版本由插件分配。"""
+    version: str = 'v0000'

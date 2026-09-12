@@ -26,7 +26,7 @@ def start_worker(root):
     log = metadata_path(root, 'queue', 'worker.log')
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open('ab') as output:
-        subprocess.Popen([sys.executable, '-m', 'archguard.dispatch_queue', str(Path(root).resolve())],
+        subprocess.Popen([sys.executable, '-X', 'utf8', '-m', 'archguard.dispatch_queue', str(Path(root).resolve())],
                 stdin=subprocess.DEVNULL, stdout=output, stderr=output, close_fds=True,
                 creationflags=(subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS) if os.name == 'nt' else 0,
                 start_new_session=os.name != 'nt')

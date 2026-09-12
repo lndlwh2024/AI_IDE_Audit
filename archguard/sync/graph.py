@@ -42,6 +42,7 @@ class GraphManager:
     def preview(self, force=False):
         """只计算候选图谱和缓存，由调用者在事务中固定后发布。"""
         sources = {}
+        old = self.read_graph()
         previous_cache = {} if force else read_json(self.cache_file, {})
         cache = {'files': {}, 'parsed': dict(previous_cache.get('parsed', {}))}
         files_read = 0
@@ -86,7 +87,8 @@ class GraphManager:
                     sources[relative] = content
                     cache['files'][relative] = {'stat': signature, 'content': content}
         cache['parsed'] = {k: v for k, v in cache['parsed'].items() if k in sources}
-        old = self.read_graph()
+        # 新增普通说明文档不自动提升为架构节点；既有显式语义声明仍保留。
+        sources = {p:c for p,c in sources.items() if p in old.nodes or Path(p).suffix.lower() not in {'.md', '.rst', '.txt'}}
         graph = build_graph(sources, old.model_dump(by_alias=True), cache['parsed'])
         graph['scan_stats'] = {'files_read': files_read, 'files_total': len(sources)}
         if graph['diagnostics']:
@@ -108,6 +110,12 @@ class GraphManager:
 
     def _commit(self, old, graph, ide_id, trigger_version, cache=None):
         import json
+        def semantic(value):
+            return {k:v for k,v in value.model_dump(by_alias=True).items() if k not in ('meta','scan_stats')}
+        if old.meta.version != 'v0000' and semantic(old) == semantic(graph):
+            if cache is not None:
+                atomic_json(self.cache_file, cache)
+            return old.model_copy(update={'scan_stats':getattr(graph, 'scan_stats', {})})
         diff = self.get_graph_diff(old, graph)
         graph.meta.version = f'v{int(old.meta.version[1:]) + 1:04d}'
         graph.meta.last_updated = datetime.now(timezone.utc).isoformat()
