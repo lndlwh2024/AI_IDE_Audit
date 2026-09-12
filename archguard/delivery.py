@@ -33,4 +33,4 @@ def audit_packet(report):
 def prepared_summary(batch):
     return {'base_commit': batch['base_commit'], 'tree': batch['tree'],
             'prompt_count':len(batch['prompts']), 'ledger_event_count':len(batch['ledger_events']),
-            'graph':graph_summary(batch['declared_graph']), 'sealed_locally':True}
+            'graph':graph_summary(batch['declared_graph']), 'sealed_locally':True, 'usage_measurement_count':len(batch.get('usage_measurement_ids', []))}

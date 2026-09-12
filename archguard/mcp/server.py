@@ -17,7 +17,7 @@ def create_server(project_root, role='audit', audit_id=None):
         raise ValueError('未知服务角色')
     root = str(Path(project_root).resolve())
     app = MCPServer('ide-audit-' + role)
-    measurement = {'id': None}
+    measurement = {'id': None, 'thread_id': None}
     def tool(**options):
         def register(fn):
             @wraps(fn)
@@ -65,7 +65,9 @@ def create_server(project_root, role='audit', audit_id=None):
     @tool(description='A 在检查账本/图谱前或提交后维护前，B 在审计前记录用量起点；传当前真实 Codex 任务 ID')
     def begin_token_phase(thread_id: str, phase: str, audit_id: str | None = None) -> dict:
         from archguard.phase_usage import begin
-        return begin(root, thread_id, phase, 'A' if role == 'dev' else 'B', audit_id=audit_id)
+        result = begin(root, thread_id, phase, 'A' if role == 'dev' else 'B', audit_id=audit_id)
+        measurement['thread_id'] = thread_id
+        return result
 
     @tool(description='阶段完成后立即读取本次与本窗口累计 token；把 display 原样展示给用户，未知不猜测')
     def finish_token_phase(measurement_id: str) -> dict:
@@ -102,7 +104,10 @@ def create_server(project_root, role='audit', audit_id=None):
     @tool(description='生成四段式人读报告，传 B 已完成的裁决；仅排版和读取本地计数，不代替 B 判断。最终正文展示 markdown，机器对象放附录')
     def format_audit_report(verdict: dict) -> dict:
         from archguard.presentation import render
-        return {'markdown': render(root, view(), verdict)}
+        from archguard.presentation import refresh_a_window
+        result = view()
+        refresh_a_window(root, result.audit_id)
+        return {'markdown': render(root, result, verdict)}
 
     @tool(description='读取已回收 B 裁决，生成最终四段报告和当前已结算用量；不得仅展示裸 JSON')
     def get_final_audit_report() -> dict:
@@ -112,6 +117,8 @@ def create_server(project_root, role='audit', audit_id=None):
         verdict = read_json(metadata_path(root, 'verdicts', result.audit_id + '.json'))
         if verdict is None:
             raise ValueError('B 裁决尚未回收，不能生成最终报告')
+        from archguard.presentation import refresh_a_window
+        refresh_a_window(root, result.audit_id)
         return {'markdown': render(root, result, verdict)}
 
     @tool(description='预测绑定提交新增证据文本 token 范围；不包含历史、系统工具与输出，不是实际消耗')
@@ -356,7 +363,10 @@ def create_server(project_root, role='audit', audit_id=None):
         @tool(description='提交前固定暂存树、需求与申报批次')
         def prepare_audit_commit(measurement_ids: list[str] | None = None) -> dict:
             with control.guarded(root):
-                return prepared_summary(prepare_commit(root, measurement_ids))
+                from archguard.phase_usage import pending_ids
+                automatic = pending_ids(root, measurement['thread_id']) if measurement['thread_id'] else []
+                ids = list(dict.fromkeys([*automatic, *(measurement_ids or [])]))
+                return prepared_summary(prepare_commit(root, ids))
 
     return app
 

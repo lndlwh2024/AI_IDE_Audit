@@ -1,6 +1,7 @@
 """A/B 操作区间的真实宿主用量；只计已观测差值，未知不猜测。"""
 from archguard import operation_log
 import time
+import hashlib
 from uuid import uuid4
 from pathlib import Path
 from archguard import usage, project_control as control
@@ -19,7 +20,10 @@ def snapshot(root, thread_id):
             if project != control.status(root).get('project_id') or thread.get('projectId') not in (None, project):
                 raise ValueError('用量任务项目不匹配')
             # 老 A 可能无 projectId；以宿主目录、当前授权项目及日志头共同验证，仅读计数。
-            return usage.capture(root, client, thread_id)
+            value = usage.capture(root, client, thread_id)
+            if value.get('counts', {}).get('totalTokens') is not None:
+                atomic_json(window_path(root, thread_id), {'thread_id':thread_id, 'observed_at':time.time(), 'snapshot':{k:v for k,v in value.items() if k != 'per_turn'}})
+            return value
     except Exception as exc:
         return {'status':'unknown', 'counts':{f:None for f in usage.FIELDS},
                 'source':'host-unavailable', 'reason':str(exc)}
@@ -91,3 +95,29 @@ def compact_b(root):
             'project_b_total_tokens':full['observed_total_tokens'],
             'display':f"B：本轮 {last if last is not None else '未知'} token；本窗口累计（宿主当前计数）{total if total is not None else '未知'} token",
             'note':'宿主统计可能延迟；只返回摘要，完整计数留存本地'}
+
+
+def window_path(root, thread_id):
+    return metadata_path(root, 'usage-windows', hashlib.sha256(thread_id.encode()).hexdigest() + '.json')
+
+
+def window_total(root, thread_id, refresh=False):
+    if not thread_id:
+        return {'total':None, 'status':'未记录 A 任务身份'}
+    if refresh:
+        snapshot(root, thread_id)
+    record = read_json(window_path(root, thread_id), {})
+    return {'total':record.get('snapshot',{}).get('counts',{}).get('totalTokens'),
+            'observed_at':record.get('observed_at'), 'thread_id':thread_id,
+            'status':'最近观测，非实时账单' if record else '宿主未返回可用累计'}
+
+
+def pending_ids(root, thread_id):
+    import git
+    try:
+        base = git.Repo(root).head.commit.hexsha
+    except ValueError:
+        base = None
+    return [r['id'] for p in metadata_path(root,'usage-phases').glob('*.json')
+            if (r := read_json(p, {})).get('thread_id') == thread_id and r.get('base_commit') == base
+            and r.get('role') == 'A' and r.get('audit_id') is None]
