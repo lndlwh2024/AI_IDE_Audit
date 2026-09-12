@@ -15,6 +15,8 @@ def enqueue(root, audit_id, launch=True):
     with control.guarded(root) as authorization, transaction(root, 'queue'):
         if not path.exists():
             atomic_json(path, {'audit_id': audit_id, 'created_at': time.time(), 'status': 'queued', 'epoch': authorization['epoch']})
+    from archguard import operation_log
+    operation_log.write(root, 'commit_enqueued', audit_id=audit_id, role='A', status=read_json(path)['status'], actual_tokens=None, note='本地入队不调用模型')
     if launch:
         start_worker(root)
     return read_json(path)

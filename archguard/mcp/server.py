@@ -8,6 +8,8 @@ from archguard.runtime import get_result, prepare_commit
 from archguard.sync.schemas import OperationEvent
 from archguard.delivery import graph_summary, graph_slice, prepared_summary, audit_packet
 import json
+import time
+from archguard import operation_log
 
 
 def create_server(project_root, role='audit', audit_id=None):
@@ -15,17 +17,42 @@ def create_server(project_root, role='audit', audit_id=None):
         raise ValueError('未知服务角色')
     root = str(Path(project_root).resolve())
     app = MCPServer('ide-audit-' + role)
+    measurement = {'id': None}
     def tool(**options):
         def register(fn):
             @wraps(fn)
             def checked(*args, **kwargs):
                 from archguard.adapters.codex.session_manager import AppServerError
+                started = time.monotonic()
+                result, error = None, None
                 try:
-                    return fn(*args, **kwargs)
+                    result = fn(*args, **kwargs)
+                    if fn.__name__ == 'begin_token_phase':
+                        measurement['id'] = result['measurement_id']
+                    return result
                 except (ValueError, PermissionError, AppServerError) as exc:
+                    error = type(exc).__name__
                     raise ToolError(str(exc)) from exc
+                except Exception as exc:
+                    error = type(exc).__name__
+                    raise
+                finally:
+                    # 未授权项目保持关闭；不为状态探测创建业务日志。
+                    if control.status(root).get('status') in ('enabled', 'pending_a'):
+                        operation_log.write(root, fn.__name__, role='A' if role == 'dev' else 'B',
+                            measurement_id=measurement['id'], status='failed' if error else 'completed',
+                            error_type=error, elapsed_ms=round((time.monotonic()-started)*1000, 3),
+                            request=operation_log.size({'args':args, 'kwargs':kwargs}),
+                            response=operation_log.size(result), actual_tokens=None,
+                            note='本地工具不调用模型；模型携带上下文的消耗由宿主阶段快照记录')
+                    if fn.__name__ == 'finish_token_phase':
+                        measurement['id'] = None
             return app.tool(**options)(checked)
         return register
+
+    @tool(description='分页读取各环节用量元数据日志；每次最多 20 条，不返回源码或提示词正文')
+    def get_operation_usage_log(limit: int = 10, before: str | None = None) -> dict:
+        return operation_log.read(root, limit, before)
 
     bound_id = audit_id
     from archguard import project_control as control

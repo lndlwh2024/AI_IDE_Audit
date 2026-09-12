@@ -1,6 +1,6 @@
 {
   "name": "ide-audit",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "同项目双会话架构审计与完整协同图谱维护",
   "author": {
     "name": "lndlwh2024"

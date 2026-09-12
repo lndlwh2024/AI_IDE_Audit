@@ -21,3 +21,6 @@
 
 
 用量报告：B 不必额外调用 begin/finish；插件已在派发前留存起点。裁决完成时调用 get_token_usage，在 commentary 立即展示 display，再给出最终 JSON；最终回复尚未结算不猜数。结构化裁决的 JSON schema 不增添非 schema 字段，宿主完成后的完整本轮计数由 A 回收并展示。事实包图谱是本次文件及一跳依赖，不代表完整全局证明；缺证时只请求具体相关文件，禁止全项目重扫或反复取整图。新 B 不继承旧窗口聊天。
+
+
+0.4.3：B 完成时自动保存 b_audit_finished 计数日志，按 thread_id/turn_id 去重。使用 get_token_usage 展示本轮与窗口累计；零新增观测显示未知。必要时仅分页读取 get_operation_usage_log，不全量读取日志，不为查日志额外发起审计。

@@ -242,5 +242,15 @@ def usage_command(root):
     click.echo(json.dumps(execute(lambda: refresh_current(root)), ensure_ascii=False))
 
 
+@cli.command('operation-usage')
+@click.option('--limit', default=10, type=click.IntRange(1, 20))
+@click.option('--before', default=None)
+@click.pass_obj
+def operation_usage_command(root, limit, before):
+    """分页查看本地环节用量日志，不调用模型。"""
+    from archguard.operation_log import read
+    click.echo(json.dumps(execute(lambda: read(root, limit, before)), ensure_ascii=False))
+
+
 if __name__ == '__main__':
     cli()

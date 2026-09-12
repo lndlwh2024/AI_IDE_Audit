@@ -1,4 +1,6 @@
 """A/B 操作区间的真实宿主用量；只计已观测差值，未知不猜测。"""
+from archguard import operation_log
+import time
 from uuid import uuid4
 from pathlib import Path
 from archguard import usage, project_control as control
@@ -25,7 +27,7 @@ def snapshot(root, thread_id):
 
 def begin(root, thread_id, phase, role):
     control.require(root, initializing=True)
-    if phase not in ('initial_sync', 'before_edit', 'prepare_commit', 'after_commit', 'audit'):
+    if phase not in ('initial_sync', 'before_edit', 'prepare_commit', 'after_commit', 'audit', 'align_updates', 'edit_lock', 'record_changes', 'graph_update', 'edit_unlock', 'dispatch'):
         raise ValueError('未知操作阶段')
     if (role == 'A' and phase == 'audit') or (role == 'B' and phase != 'audit'):
         raise ValueError('阶段与 A/B 职责不符')
@@ -36,7 +38,7 @@ def begin(root, thread_id, phase, role):
     value.pop('per_turn', None)
     identifier = uuid4().hex
     atomic_json(metadata_path(root, 'usage-phases', identifier + '.json'),
-                {'id':identifier, 'thread_id':thread_id, 'role':role, 'phase':phase, 'before':value, 'status':'started'})
+                {'id':identifier, 'thread_id':thread_id, 'role':role, 'phase':phase, 'before':value, 'started_at':time.time(), 'status':'started'})
     return {'measurement_id':identifier, 'status':value['status'], 'note':'统计当前阶段的模型交互区间；本地 Python 扫描本身不调用模型'}
 
 
@@ -56,8 +58,9 @@ def finish(root, identifier, role):
             for field in usage.FIELDS:
                 old, new = before.get('counts',{}).get(field), after.get('counts',{}).get(field)
                 counts[field] = new-old if before.get('source') == after.get('source') and type(old) is int and type(new) is int and new >= old else None
-            record.update(status='completed', after=after, counts=counts)
+            record.update(status='completed', after=after, counts=counts, finished_at=time.time())
             atomic_json(path, record)
+            operation_log.write(root, 'phase_finished', measurement_id=identifier, thread_id=record['thread_id'], role=role, phase=record['phase'], counts=counts, source=after.get('source'), thread_total_tokens=after.get('counts', {}).get('totalTokens'), settlement='observed_interval' if counts.get('totalTokens') else 'unknown_or_pending')
         total = record.get('after',{}).get('counts',{}).get('totalTokens')
         observed_delta = record['counts']['totalTokens']
         n = observed_delta if observed_delta != 0 else None
@@ -74,7 +77,7 @@ def compact_b(root):
     records = full['threads']
     record = next((r for r in records if r['thread_id'] == current), {})
     turn = next(reversed(record.get('turns',{}).values()), {}) if record.get('turns') else {}
-    last = turn.get('counts',{}).get('totalTokens')
+    last = turn.get('counts',{}).get('totalTokens') or None
     total = record.get('latest',{}).get('counts',{}).get('totalTokens')
     return {'role':'B', 'this_turn_tokens':last, 'thread_total_tokens':total,
             'project_b_total_tokens':full['observed_total_tokens'],

@@ -138,6 +138,8 @@ def save(root, thread_id, turn_id, audit_id, before, after, kind='audit'):
         if after.get('status') == 'observed':
             record['latest'] = after
         atomic_json(path(root, thread_id), record)
+        from archguard import operation_log
+        operation_log.write(root, 'b_audit_finished', role='B', thread_id=thread_id, turn_id=turn_id, audit_id=audit_id, counts=delta, thread_total_tokens=after.get('counts', {}).get('totalTokens'), source=after.get('source'), note='同一 turn 的重复观测不能累加；按 thread_id 和 turn_id 去重')
         return record['turns'][turn_id]
 
 
