@@ -39,13 +39,15 @@ def render(root, report, verdict):
         raise ValueError('报告缺少逐文件裁决')
     ledger = report.ledger_verification
     graph = report.graph_analysis
+    consistency = '一致' if ledger.get('is_consistent') is True else '不一致' if ledger.get('is_consistent') is False else '未知'
+    analysis_state = '分析完成' if report.analysis_status == 'complete' else report.analysis_status
     lines = [f'# IDE_Audit 审计报告', '', f'提交：`{report.commit_hash}`', '',
              '## 一、审计一：插件客观检查', '',
              f'- 固定范围：父提交 `{report.base_commit}` → 本提交；{len(files)} 个变更文件。',
              f'- 需求：{len(report.prompts)} 条；封存账本：{len(report.ledger_events)} 条事件。',
              f'- 图谱：新增节点 {len(graph.get("nodes_added", []))}，删除节点 {len(graph.get("nodes_removed", []))}；新增边 {len(graph.get("edges_added", []))}，删除边 {len(graph.get("edges_removed", []))}。物理节点变化不等于业务架构越权。',
-             f'- 账本一致性：{('一致' if ledger.get('is_consistent') is True else '不一致' if ledger.get('is_consistent') is False else '未知')}；未申报文件 {len(ledger.get("undeclared_files", []))}，虚报文件 {len(ledger.get("phantom_files", []))}，行范围偏差 {len(ledger.get("line_deviations", []))}。',
-             f'- 证据状态：{('分析完成' if report.analysis_status == 'complete' else report.analysis_status)}；诊断 {len(report.diagnostics)} 项。', '',
+             f'- 账本一致性：{consistency}；未申报文件 {len(ledger.get("undeclared_files", []))}，虚报文件 {len(ledger.get("phantom_files", []))}，行范围偏差 {len(ledger.get("line_deviations", []))}。',
+             f'- 证据状态：{analysis_state}；诊断 {len(report.diagnostics)} 项。', '',
              '## 二、审计二：B 对照需求与实现', '',
              '| 文件 | 用户需求依据 | 实际修改与判断 | 与需求相关 |', '|---|---|---|---|']
     fact_rows = ['', '| 文件 | 实际增删 | 账本事件 | 行级检查 |', '|---|---|---|---|']
