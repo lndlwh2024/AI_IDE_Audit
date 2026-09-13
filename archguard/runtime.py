@@ -124,3 +124,15 @@ def audit_project(project_root, commit_hash=None):
         if repo.head.commit.hexsha == sha:
             atomic_json(metadata_path(root, 'results', 'latest.json'), saved)
         return result
+
+
+def save_b_input(root, report, message, developer_instructions=''):
+    """留存待发送的完整模型输入；准备记录不代表宿主已接收。"""
+    from archguard.delivery import payload_manifest
+    value = {'audit_id':report.audit_id,'message':message,'developer_instructions':developer_instructions,
+             'manifest':payload_manifest(report),'state':'prepared_not_delivery_receipt'}
+    digest = hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+    path = metadata_path(root,'jobs',report.audit_id,'b-inputs',digest+'.json')
+    if not path.exists():
+        atomic_json(path,value)
+    return str(path)

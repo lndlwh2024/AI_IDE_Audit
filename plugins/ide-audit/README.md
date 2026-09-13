@@ -1,4 +1,4 @@
-# IDE_Audit 0.4.7
+# IDE_Audit 0.4.8
 
 安装 Codex 插件后，每个项目仍默认关闭。用户明确说“为当前项目开启 IDE_Audit”后，A 使用统一 Skill 完成项目接入；也可运行 `python scripts/install.py --project-root <项目路径> --consent`。需要 Python 3.11+、Git、已登录的 Codex 桌面与 CLI，首次安装依赖需要网络。
 

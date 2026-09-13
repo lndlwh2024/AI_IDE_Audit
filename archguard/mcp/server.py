@@ -63,7 +63,7 @@ def create_server(project_root, role='audit', audit_id=None):
     @tool(description='查看本项目已记录 B token 用量；未知不填零，不代表账户额度')
     def get_token_usage() -> dict:
         from archguard.phase_usage import compact_b
-        return compact_b(root)
+        return compact_b(root, bound_id)
 
     @tool(description='A 在检查账本/图谱前或提交后维护前，B 在审计前记录用量起点；传当前真实 Codex 任务 ID')
     def begin_token_phase(thread_id: str, phase: str, audit_id: str | None = None) -> dict:
@@ -130,6 +130,11 @@ def create_server(project_root, role='audit', audit_id=None):
         from archguard.presentation import estimate
         return estimate(audit_packet(view()))
 
+    @tool(description='返回 B 输入各字段字符清单，不打印整个事实包；字符不是实际 token')
+    def get_audit_input_manifest() -> dict:
+        from archguard.delivery import payload_manifest
+        return payload_manifest(view())
+
     @tool(description='读取绑定提交的代码图谱快照')
     def get_architecture_graph(file_paths: list[str] | None = None) -> dict:
         result = view()
@@ -190,9 +195,10 @@ def create_server(project_root, role='audit', audit_id=None):
         def collect_desktop_audit(audit_id: str) -> dict:
             from archguard.adapters.codex.desktop_bridge import collect
             from archguard.dispatch_queue import start_worker
-            result = collect(root, audit_id)
+            collect(root, audit_id)
             start_worker(root)
-            return result
+            from archguard.presentation import delivery_status
+            return delivery_status(root, audit_id)
 
         @tool(description='用稳定操作 ID 完成事件、图谱和派生视图交接；失败后相同参数重试不会重复记账')
         def complete_sync_operation(operation_id: str, event_data: OperationEvent, session_id: str | None = None) -> dict:

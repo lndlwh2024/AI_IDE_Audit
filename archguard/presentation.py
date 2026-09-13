@@ -141,3 +141,15 @@ def refresh_a_window(root, audit_id):
                if (r := read_json(p,{})).get('role') == 'A' and (r.get('id') in bound or r.get('audit_id') == audit_id)}
     for thread_id in threads - {None}:
         window_total(root, thread_id, refresh=True)
+
+
+def delivery_status(root, audit_id):
+    from archguard.runtime import _key
+    identifier = _key(audit_id)
+    state = read_json(metadata_path(root,'jobs',identifier,'dispatch.json'),{})
+    path = metadata_path(root,'reports',identifier+'.md')
+    return {'audit_id':identifier, 'audit_status':state.get('status','unknown'),
+            'thread_id':state.get('thread_id'), 'report_path':str(path), 'report_exists':path.exists(),
+            'chat_report_present':state.get('chat_report_present',False),
+            'report_delivery_status':'requires_b_panel' if path.exists() else 'report_not_ready',
+            'action':'用 open_in_codex 将此文件打开到 thread_id 指定的 B 面板；仅裁决完成不能宣称完整交付，禁止为排版重发审计'}

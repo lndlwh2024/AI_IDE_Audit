@@ -21,14 +21,12 @@ def prepare_dispatch(manager, client, report, thread_id):
     thread = verify_thread(manager, client, thread_id)
     client.request('thread/name/set', {'threadId':thread_id, 'name':'🔔' + manager.root.name + '项目审计窗口-' + str(read_json(manager.session_file, {}).get('sequence',1))})
     request_id = uuid4().hex
-    template = (Path(__file__).parents[2] / 'templates/skill_codex_audit.md').read_text(encoding='utf-8')
-    message = (template + '\n本轮是独立架构审计，不能代替 A 进行开发。以以下固定需求和提交证据裁决，'
-               '不要用以往聊天扩张本轮授权。原生桌面允许读写，但本审计任务只需要读取证据和输出报告。\n'
-               '最终先输出完整人读报告，末尾以折叠附录内唯一 json 代码块附上机器对象：{"request_id": "' + request_id + '", "verdict": <裁决对象>}。'
-               '裁决对象必须符合以下 schema：\n' + json.dumps(VERDICT_SCHEMA, ensure_ascii=False) +
-               '\n固定提交事实包：\n' + audit_packet(report))
+    from archguard.delivery import build_message
+    message = build_message(report, request_id)
+    from archguard.runtime import save_b_input
+    input_path = save_b_input(manager.root, report, message)
     atomic_json(metadata_path(manager.root, 'jobs', report.audit_id, 'dispatch.json'), {
-        'status': 'desktop_ready', 'thread_id': thread_id, 'request_id': request_id,
+        'status': 'desktop_ready', 'thread_id': thread_id, 'request_id': request_id, 'input_path':input_path,
         'previous_turn_ids': [t['id'] for t in thread.get('turns', [])], 'message': message})
     return {'desktop_dispatch_required': True, 'thread_id': thread_id}
 
@@ -87,7 +85,7 @@ def collect(root, audit_id, manager=None):
                 if not isinstance(envelope, dict) or envelope.get('request_id') != state['request_id']:
                     continue
                 result = manager._save_verdict(get_result(root, identifier), json.dumps(envelope['verdict'], ensure_ascii=False),
-                                               state['thread_id'], turn['id'])
+                                               state['thread_id'], turn['id'], presentation_text=text)
                 usage.save(root, state['thread_id'], turn['id'], identifier, state.get('usage_before'), usage_after)
                 queue_path = metadata_path(root, 'queue', identifier + '.json')
                 queue = read_json(queue_path)

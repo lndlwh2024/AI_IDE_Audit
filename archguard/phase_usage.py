@@ -83,12 +83,14 @@ def finish(root, identifier, role):
                 'scope':'累计是宿主当前计数；计数器重置前的历史不保证完整。截至最近宿主统计；包含此阶段交互携带的上下文，不含尚未结算的最终回复，不代表费用或额度百分比'}
 
 
-def compact_b(root):
+def compact_b(root, audit_id=None):
     full = usage.refresh_current(root)
     current = read_json(metadata_path(root,'session.json'),{}).get('thread_id')
     records = full['threads']
     record = next((r for r in records if r['thread_id'] == current), {})
-    turn = next(reversed(record.get('turns',{}).values()), {}) if record.get('turns') else {}
+    target = audit_id or read_json(metadata_path(root,'results','latest.json'),{}).get('audit_id')
+    matching = [v for v in record.get('turns',{}).values() if v.get('audit_id') == target] if target else []
+    turn = matching[-1] if matching else {}
     last = turn.get('counts',{}).get('totalTokens') or None
     total = record.get('latest',{}).get('counts',{}).get('totalTokens')
     return {'role':'B', 'this_turn_tokens':last, 'thread_total_tokens':total,

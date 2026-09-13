@@ -42,9 +42,12 @@ def status(root, audit_id):
         if value.get('status') == 'awaiting_desktop' and value.get('epoch') == control.status(root).get('epoch') and control.status(root)['status'] == 'enabled':
             pending.append(value)
     pending.sort(key=lambda e: e['created_at'])
-    return {'audit_id': identifier, 'desktop_pending': [e['audit_id'] for e in pending],
+    from archguard.presentation import delivery_status
+    dispatch = read_json(metadata_path(root, 'jobs', identifier, 'dispatch.json'), {})
+    compact = {k:v for k,v in dispatch.items() if k not in ('message','usage_before','previous_turn_ids')}
+    return {'delivery':delivery_status(root, identifier), 'audit_id': identifier, 'desktop_pending': [e['audit_id'] for e in pending],
             'queue': read_json(metadata_path(root, 'queue', identifier + '.json'), {}),
-            'dispatch': read_json(metadata_path(root, 'jobs', identifier, 'dispatch.json'), {}),
+            'dispatch': compact,
             'session': read_json(metadata_path(root, 'session.json'), {})}
 
 

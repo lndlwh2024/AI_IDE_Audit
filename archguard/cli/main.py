@@ -310,7 +310,22 @@ def desktop_collect(root, audit_id):
         collect(root,audit_id)
         from archguard.dispatch_queue import start_worker
         start_worker(root)
-        return {'audit_id':audit_id,'status':'completed','report_path':str(metadata_path(root,'reports',audit_id+'.md'))}
+        from archguard.presentation import delivery_status
+        return delivery_status(root,audit_id)
+    click.echo(json.dumps(execute(perform),ensure_ascii=False))
+
+
+@cli.command('report-delivery')
+@click.option('--audit-id', required=True)
+@click.pass_obj
+def report_delivery(root, audit_id):
+    """为已有真实裁决更新人读报告并返回 B 面板交付要求，不调用模型。"""
+    from archguard.presentation import save_report, delivery_status
+    from archguard.runtime import get_result
+    def perform():
+        get_result(root,audit_id)
+        save_report(root,audit_id)
+        return delivery_status(root,audit_id)
     click.echo(json.dumps(execute(perform),ensure_ascii=False))
 
 

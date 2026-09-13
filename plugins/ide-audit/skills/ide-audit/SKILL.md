@@ -110,3 +110,12 @@ get_project_status 返回 runtime.running_version、installed_version、restart_
 恢复已记账未提交的工作时复用原暂存文件与事件，先开始新恢复阶段再 prepare，核对短摘要中的 usage_measurement_count。prepare 不再打印全图谱。实际 Git 提交仍只在用户授权后执行，post-commit Hook 负责入队。桌面桥接 claim/collect 沿用原请求状态和原 B；ready=true 才通过宿主原生 send_message_to_thread 发送返回 prompt，不自行编造裁决；已领取时仅 collect，不重复发送。collect 只返回报告路径，完整报告在 B 展示。
 
 runtime-status 只证明当前 CLI 进程版本，不能宣称原 MCP 已恢复。本地操作明细不经 MCP 时无逐工具日志，阶段与入队/B 用量仍保留，须如实注明恢复入口。若需恢复桌面 MCP，可由用户完全退出后台后重启或在同项目新建任务验证，不再自动杀进程。
+
+
+## 0.4.8 载荷与报告交付契约（替代旧版仅检查裁决完成）
+
+B 守则已整合为单份短文，不再在 B 追加开发/升级历史。事实包保留需求原文、提交 diff、相关图谱及账本；全局孤立节点与环只发送数量和涉及本次文件的条目。完整 B 消息上限 24000 字符，超限停止而不是截断证据。状态查询不再重复返回派发 prompt。
+
+裁决回收成功仅代表 audit_status=completed。检查 delivery.report_delivery_status / collect 返回的 report_delivery_status，requires_b_panel 表示还必须用 open_in_codex 把 report_path 打开到 thread_id 指定的 B 面板。不得只贴机器 JSON 或称整套完成。旧 B 可能保留早期高优先级“仅 JSON”指令，普通新派发消息不能可靠覆盖；此时保留原 B，不重复审计，以其真实裁决生成完整四段文件作为可读交付。不得伪称旧 B 聊天指令已更新。
+
+已完成历史审计可用独立 CLI report-delivery --audit-id <SHA> 本地生成完整报告并获取 B 面板交付信息，不再调用模型审计。B 的本轮 token 必须按当前 audit_id 匹配，尚未回收时不能用上一轮计数代替。
