@@ -95,11 +95,19 @@ def prompt(root, text):
 
 
 @cli.command('prepare')
+@click.option('--usage-thread-id', default=None, help='当前 A 真实任务 ID，用于自动收集同基线阶段')
 @click.pass_obj
-def prepare(root):
+def prepare(root, usage_thread_id):
     """提交前固定暂存树和需求/申报批次。"""
     from archguard.runtime import prepare_commit
-    click.echo(json.dumps(execute(lambda: prepare_commit(root)), ensure_ascii=False))
+    from archguard.phase_usage import pending_ids
+    from archguard.delivery import prepared_summary
+    def perform():
+        ids = pending_ids(root, usage_thread_id) if usage_thread_id else []
+        if usage_thread_id and not ids:
+            raise ValueError('当前 A 没有同基线用量阶段，请先 phase-begin')
+        return prepared_summary(prepare_commit(root, ids))
+    click.echo(json.dumps(execute(perform), ensure_ascii=False))
 
 
 @cli.command()
@@ -250,6 +258,60 @@ def operation_usage_command(root, limit, before):
     """分页查看本地环节用量日志，不调用模型。"""
     from archguard.operation_log import read
     click.echo(json.dumps(execute(lambda: read(root, limit, before)), ensure_ascii=False))
+
+
+@cli.command('runtime-status')
+@click.pass_obj
+def runtime_status(root):
+    """独立进程版本和授权检查，不代表桌面 MCP 连接状态。"""
+    from archguard.runtime_version import info
+    from archguard.project_control import status
+    click.echo(json.dumps({'runtime': info(), 'project': status(root), 'transport':'fresh-cli',
+                          'scope':'当前命令进程；不宣称原桌面 MCP 已恢复'}, ensure_ascii=False))
+
+
+@cli.command('phase-begin')
+@click.option('--thread-id', required=True)
+@click.option('--phase', required=True)
+@click.option('--audit-id', default=None)
+@click.pass_obj
+def phase_begin(root, thread_id, phase, audit_id):
+    """A 独立进程阶段起点；仍校验宿主任务、项目和授权。"""
+    from archguard.phase_usage import begin
+    click.echo(json.dumps(execute(lambda: begin(root,thread_id,phase,'A',audit_id)),ensure_ascii=False))
+
+
+@cli.command('phase-finish')
+@click.argument('measurement_id')
+@click.pass_obj
+def phase_finish(root, measurement_id):
+    """结束原 A 阶段，未知不冒充零。"""
+    from archguard.phase_usage import finish
+    click.echo(json.dumps(execute(lambda: finish(root,measurement_id,'A')),ensure_ascii=False))
+
+
+@cli.command('desktop-claim')
+@click.argument('audit_id')
+@click.pass_obj
+def desktop_claim(root, audit_id):
+    """领取既有桌面派发；沿用原 request_id 和防重复检查。"""
+    from archguard.adapters.codex.desktop_bridge import claim
+    click.echo(json.dumps(execute(lambda: claim(root,audit_id)),ensure_ascii=False))
+
+
+@cli.command('desktop-collect')
+@click.argument('audit_id')
+@click.pass_obj
+def desktop_collect(root, audit_id):
+    """回收原 B 裁决，A 仅显示状态及报告路径。"""
+    from archguard.adapters.codex.desktop_bridge import collect
+    from archguard.storage import metadata_path
+    def perform():
+        collect(root,audit_id)
+        from archguard.dispatch_queue import start_worker
+        start_worker(root)
+        return {'audit_id':audit_id,'status':'completed','report_path':str(metadata_path(root,'reports',audit_id+'.md'))}
+    click.echo(json.dumps(execute(perform),ensure_ascii=False))
 
 
 if __name__ == '__main__':

@@ -99,3 +99,14 @@ A 第一段 begin_token_phase 必须传当前真实任务 ID；后续同一 MCP 
 get_project_status 返回 runtime.running_version、installed_version、restart_required 和 capabilities。先核对这份正在运行的 MCP 自报结果；磁盘 pip 版本不能替代运行版本。缺少 runtime、缺少 automatic_phase_binding/prepared_usage_count 或 restart_required=true 时，停止业务操作并刷新宿主 MCP；不能先编辑再到提交准备发现旧协议。旧服务可继续查询状态或暂停，但不能继续记账、准备和派发。0.4.5 及更早服务本身没有此保护，首次升级必须刷新连接。
 
 测试已编辑并记账但尚未提交时，恢复应复用当前暂存文件和既有事件。不能重新按“文件必须不存在”流程创建文件，不能重复记录同一修改。新运行服务创建恢复阶段并验证用量，准备批次重新生成；历史没有开发基线的阶段记录不得伪装成新绑定记录。
+
+
+## 0.4.7 传输关闭时的独立 CLI 恢复
+
+不要终止宿主或 MCP 子进程来尝试恢复，也不要把独立 app-server 的 reload 成功视为桌面现有连接更新。Transport closed 表示当前连接不可用；重复调用同一工具不能修复连接。
+
+当前已授权 A 可用项目 .ide_audit/runtime/Scripts/python.exe，以 -I -X utf8 -m archguard.cli.main --project-root <绝对项目目录> 执行独立 CLI：runtime-status、phase-begin --thread-id <真实A> --phase prepare_commit、phase-finish <ID>、prepare --usage-thread-id <真实A>、queue-status、desktop-claim <SHA>、desktop-collect <SHA>。每次启动当前安装版本，不依赖桌面坏连接。该入口不绕过项目授权、任务身份、固定证据或防重复派发。
+
+恢复已记账未提交的工作时复用原暂存文件与事件，先开始新恢复阶段再 prepare，核对短摘要中的 usage_measurement_count。prepare 不再打印全图谱。实际 Git 提交仍只在用户授权后执行，post-commit Hook 负责入队。桌面桥接 claim/collect 沿用原请求状态和原 B；ready=true 才通过宿主原生 send_message_to_thread 发送返回 prompt，不自行编造裁决；已领取时仅 collect，不重复发送。collect 只返回报告路径，完整报告在 B 展示。
+
+runtime-status 只证明当前 CLI 进程版本，不能宣称原 MCP 已恢复。本地操作明细不经 MCP 时无逐工具日志，阶段与入队/B 用量仍保留，须如实注明恢复入口。若需恢复桌面 MCP，可由用户完全退出后台后重启或在同项目新建任务验证，不再自动杀进程。
