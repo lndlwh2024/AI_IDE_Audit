@@ -92,3 +92,10 @@ A 记录各阶段 measurement_id，prepare_audit_commit(measurement_ids=[本轮�
 A 第一段 begin_token_phase 必须传当前真实任务 ID；后续同一 MCP 服务的 prepare_audit_commit 会自动收集该 A、同开发基线的阶段 ID，返回 usage_measurement_count；不再依赖手工传 ID 清单。服务重启后先用当前真实任务 ID 开始必要的新阶段，已有同基线记录仍会收集。显式 measurement_ids 兼容保留。提交后阶段必须传 audit_id。未获得有效用量时报告原因，不虚报为零。
 
 窗口累计独立保存最近宿主观测，与某一阶段有没有记录无关。B 排版时刷新已绑定 A 的窗口累计，列明任务及观测时间。阶段区分“无阶段记录”“阶段尚未结束”“待结算”“计数缺失/重置”；共享区间标出父阶段，不重复相加。未执行的步骤不需要为了凑表做假动作。不要把无记录自动解释为未执行。
+
+
+## 0.4.6 运行版本验收（必须在编辑/记账之前）
+
+get_project_status 返回 runtime.running_version、installed_version、restart_required 和 capabilities。先核对这份正在运行的 MCP 自报结果；磁盘 pip 版本不能替代运行版本。缺少 runtime、缺少 automatic_phase_binding/prepared_usage_count 或 restart_required=true 时，停止业务操作并刷新宿主 MCP；不能先编辑再到提交准备发现旧协议。旧服务可继续查询状态或暂停，但不能继续记账、准备和派发。0.4.5 及更早服务本身没有此保护，首次升级必须刷新连接。
+
+测试已编辑并记账但尚未提交时，恢复应复用当前暂存文件和既有事件。不能重新按“文件必须不存在”流程创建文件，不能重复记录同一修改。新运行服务创建恢复阶段并验证用量，准备批次重新生成；历史没有开发基线的阶段记录不得伪装成新绑定记录。

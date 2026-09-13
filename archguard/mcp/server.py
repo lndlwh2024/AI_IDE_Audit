@@ -26,6 +26,9 @@ def create_server(project_root, role='audit', audit_id=None):
                 started = time.monotonic()
                 result, error = None, None
                 try:
+                    if fn.__name__ not in ('get_project_status','pause_project'):
+                        from archguard.runtime_version import require_current
+                        require_current()
                     result = fn(*args, **kwargs)
                     if fn.__name__ == 'begin_token_phase':
                         measurement['id'] = result['measurement_id']
@@ -76,7 +79,8 @@ def create_server(project_root, role='audit', audit_id=None):
 
     @tool(description='查询本项目是否获授权、暂停或等待 A 同步；不扫描源码')
     def get_project_status() -> dict:
-        state = control.status(root)
+        from archguard.runtime_version import info
+        state = dict(control.status(root), runtime=info())
         if role == 'dev':
             state = dict(state, ready_sync_sessions=[{'ide_id':i, 'session_id':s} for i,s in sorted(ready_sessions)])
         return state
