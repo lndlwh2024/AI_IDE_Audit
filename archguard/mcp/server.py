@@ -201,10 +201,22 @@ def create_server(project_root, role='audit', audit_id=None):
             from archguard.presentation import delivery_status
             return delivery_status(root, audit_id)
 
+        def current_event(event_data):
+            import git
+            repo = git.Repo(root)
+            base = repo.head.commit.hexsha if repo.head.is_valid() else None
+            value = dict(event_data)
+            details = dict(value.get('git') or {})
+            if details.get('base_commit') not in (None, base) or details.get('head_commit') is not None:
+                raise ValueError('账本提交编号与当前 HEAD 不符；请使用当前开发基线，不得沿用旧测试提交')
+            details['base_commit'] = base
+            value['git'] = details
+            return value
+
         @tool(description='用稳定操作 ID 完成事件、图谱和派生视图交接；失败后相同参数重试不会重复记账')
         def complete_sync_operation(operation_id: str, event_data: OperationEvent, session_id: str | None = None) -> dict:
             with control.guarded(root):
-                return SyncWorkflow(root).complete(operation_id, event_data.model_dump(mode="json", by_alias=True), session_id)
+                return SyncWorkflow(root).complete(operation_id, current_event(event_data.model_dump(mode="json", by_alias=True)), session_id)
 
         @tool(description='恢复中断的协同交接，不重复追加原事件')
         def recover_sync_operation() -> dict:
@@ -302,7 +314,7 @@ def create_server(project_root, role='audit', audit_id=None):
         @tool(description='追加标准协同事件，自动维护账本流水和项目状态')
         @synchronized
         def record_sync_event(event_data: dict) -> dict:
-            return LedgerManager(root).append_event(event_data).model_dump(mode='json', by_alias=True)
+            return LedgerManager(root).append_event(current_event(event_data)).model_dump(mode='json', by_alias=True)
 
         @tool(description='扫描源码并安全更新工作态图谱与变更日志')
         @synchronized

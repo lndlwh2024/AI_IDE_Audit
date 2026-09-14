@@ -49,7 +49,7 @@ def choose(root, project_id, enabled, confirmed=False):
         if enabled and old.get('project_id') == project_id and old['status'] == 'enabled':
             return old
         state = dict(old, identity=identity(root), project_id=project_id,
-                     status='pending_a' if enabled else 'declined',
+                     status='pending_a' if enabled else 'declined', archive_on_refresh=True,
                      revision=old['revision'] + 1, epoch=old.get('epoch', 0) + 1, changed_at=time.time())
         atomic_json(metadata_path(root, 'project-control.json'), state)
         return state
@@ -79,7 +79,7 @@ def resume(root):
             raise PermissionError('项目尚未授权，请先明确开启')
         if old['status'] != 'paused':
             return old
-        state = dict(old, status='pending_a', revision=old['revision'] + 1, changed_at=time.time())
+        state = dict(old, status='pending_a', archive_on_refresh=True, revision=old['revision'] + 1, changed_at=time.time())
         atomic_json(metadata_path(root, 'project-control.json'), state)
         return state
 
@@ -100,6 +100,7 @@ def refresh_a(root, ide_id, session_id=None, thread_id=None):
     from archguard.sync.cursor import CursorManager
     from archguard.sync.workflow import SyncWorkflow
     with guarded(root, initializing=True) as state:
+        state = dict(state, archive_on_refresh=state['status'] == 'pending_a' and state.get('archive_on_refresh', False))
         atomic_json(metadata_path(root, 'project-control.json'),
                     dict(state, status='pending_a', revision=state['revision'] + 1))
         verify_project(root)
@@ -124,7 +125,7 @@ def refresh_a(root, ide_id, session_id=None, thread_id=None):
             graph = GraphManager(root).sync(ide_id)
             session_id = session_id or cursors.start_session(ide_id, thread_id)
             # 暂停前未封存需求保留为历史，不能授权恢复后的新提交。
-            if state['status'] == 'pending_a':
+            if state.get('archive_on_refresh', False):
                 with transaction(root):
                     pending = metadata_path(root, 'prompts', 'pending.json')
                     values = read_json(pending, [])
@@ -139,12 +140,12 @@ def refresh_a(root, ide_id, session_id=None, thread_id=None):
                                     'prepared-resume-' + str(state['revision']) + '.json'), previous_batch)
                         atomic_json(prepared, {})
             from archguard.sync.ledger import LedgerManager
-            floor = (len(LedgerManager(root).read_all_events()) if state['status'] == 'pending_a'
+            floor = (len(LedgerManager(root).read_all_events()) if state.get('archive_on_refresh', False)
                      else state.get('ledger_floor', 0))
             checkpoint = {'head': head, 'dirty': repo.is_dirty(untracked_files=True),
                           'graph_version': graph.meta.version, 'interval': interval,
                           'session_id': session_id, 'updated_at': time.time()}
-            updated = dict(state, status='enabled', revision=state['revision'] + 2, checkpoint=checkpoint, ledger_floor=floor)
+            updated = dict(state, status='enabled', archive_on_refresh=False, revision=state['revision'] + 2, checkpoint=checkpoint, ledger_floor=floor)
             atomic_json(metadata_path(root, 'project-control.json'), updated)
             return {'session_id': session_id, 'graph': graph.model_dump(mode='json', by_alias=True),
                     'project': updated}

@@ -56,6 +56,13 @@ def _prepare_commit(project_root, measurement_ids=None):
                  'ledger_events': [e.model_dump(mode='json', by_alias=True) for e in events
                                    if e.git.base_commit == base and e.git.head_commit is None],
                  'declared_graph': GraphManager(project_root).read_graph().model_dump(mode='json', by_alias=True)}
+        missing = []
+        if not batch['prompts']:
+            missing.append('本轮用户需求')
+        if not batch['ledger_events']:
+            missing.append('当前父提交对应的账本申报')
+        if missing:
+            raise ValueError('提交准备失败：缺少' + '、'.join(missing) + '；不得继续 commit，请核对需求记录和账本 base_commit')
         atomic_json(metadata_path(project_root, 'prepared.json'), batch)
         return batch
 

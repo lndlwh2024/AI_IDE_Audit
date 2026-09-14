@@ -57,6 +57,9 @@ def test_repeat_audit_keeps_prompts_and_does_not_consume_new(repo):
     record_prompt(root, '本轮需求')
     LedgerManager(root).append_event(event(repo.head.commit.hexsha))
     changed(repo)
+    declaration = event()
+    declaration['git'] = {'base_commit':repo.head.commit.hexsha}
+    LedgerManager(root).append_event(declaration)
     prepare_commit(root)
     repo.index.commit('change')
     first = audit_project(root)
@@ -126,6 +129,9 @@ def test_sealed_inputs_detect_tampering(repo):
     root = Path(repo.working_tree_dir)
     record_prompt(root, '原需求')
     changed(repo)
+    declaration = event()
+    declaration['git'] = {'base_commit':repo.head.commit.hexsha}
+    LedgerManager(root).append_event(declaration)
     prepare_commit(root)
     repo.index.commit('change')
     first = audit_project(root)
@@ -146,6 +152,10 @@ def test_non_python_declarations_are_frozen_not_read_from_later_workspace(repo):
     graph.nodes['web.js'].purpose = '前端入口'
     manager.update_graph(graph, 'test', 'v0001')
     repo.index.add(['web.js'])
+    record_prompt(root, '新增前端入口')
+    declaration = event()
+    declaration['git'] = {'base_commit':repo.head.commit.hexsha}
+    LedgerManager(root).append_event(declaration)
     prepare_commit(root)
     repo.index.commit('web')
     first = audit_project(root)

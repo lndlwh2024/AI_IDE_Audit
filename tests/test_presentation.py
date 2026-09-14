@@ -51,6 +51,8 @@ def test_precommit_usage_binding_rejects_wrong_baseline(tmp_path):
     atomic_json(path,dict(phase,base_commit=base))
     (tmp_path/'note.md').write_text('second')
     repo.index.add(['note.md'])
+    from tests.evidence_helpers import prepare_evidence
+    prepare_evidence(tmp_path)
     batch=prepare_commit(tmp_path,[identifier])
     assert batch['usage_measurement_ids']==[identifier]
     commit=repo.index.commit('next',author=actor,committer=actor).hexsha
@@ -93,6 +95,8 @@ def test_mcp_prepare_automatically_binds_current_a(tmp_path, monkeypatch):
     repo.index.commit('base',author=actor,committer=actor)
     authorize(tmp_path,'project')
     monkeypatch.setattr(phase_usage,'snapshot',lambda *a:{'status':'observed','source':'test','counts':{'totalTokens':100}})
+    from tests.evidence_helpers import prepare_evidence
+    prepare_evidence(tmp_path)
     app=create_server(tmp_path,'dev')
     async def run():
         result=await app.call_tool('begin_token_phase',{'thread_id':'A1','phase':'before_edit'})

@@ -30,6 +30,8 @@ def test_cli_phase_continuity_and_compact_prepare(tmp_path, monkeypatch):
     first=runner.invoke(cli,prefix+['phase-begin','--thread-id','A','--phase','prepare_commit'])
     assert first.exit_code==0,first.output
     identifier=json.loads(first.output)['measurement_id']
+    from tests.evidence_helpers import prepare_evidence
+    prepare_evidence(tmp_path)
     prepared=runner.invoke(cli,prefix+['prepare','--usage-thread-id','A'])
     assert prepared.exit_code==0,prepared.output
     assert json.loads(prepared.output)['usage_measurement_count']==1
