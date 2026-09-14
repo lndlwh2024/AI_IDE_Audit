@@ -125,12 +125,13 @@ def create_server(project_root, role='audit', audit_id=None):
         refresh_a_window(root, result.audit_id)
         return {'markdown': render(root, result, verdict)}
 
-    @tool(description='预测绑定提交新增证据文本 token 范围；不包含历史、系统工具与输出，不是实际消耗')
+    @tool(description='预测绑定提交完整新增消息 token 范围；包含插件守则，不含宿主历史、系统工具与输出')
     def estimate_audit_usage() -> dict:
         from archguard.presentation import estimate
-        return estimate(audit_packet(view()))
+        from archguard.delivery import build_message
+        return estimate(build_message(view(), '0'*32))
 
-    @tool(description='返回 B 输入各字段字符清单，不打印整个事实包；字符不是实际 token')
+    @tool(description='返回 B 输入分类、逐字段 token 粗估与占比；无逐字段宿主实测，不打印整个事实包')
     def get_audit_input_manifest() -> dict:
         from archguard.delivery import payload_manifest
         return payload_manifest(view())

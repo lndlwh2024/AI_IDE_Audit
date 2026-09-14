@@ -20,8 +20,6 @@ def graph_slice(graph, paths):
 def audit_packet(report):
     data = report.model_dump(mode='json')
     paths = {f['path'] for f in data['changed_files']} | {f['rename_from'] for f in data['changed_files'] if f.get('rename_from')}
-    for key in ('graph_before','graph_after','declared_graph','declared_graph_before'):
-        data[key] = graph_slice(data.get(key, {}), paths)
     analysis = data.get('graph_analysis', {})
     orphans = analysis.get('orphan_nodes', [])
     cycles = analysis.get('cycles_detected', [])
@@ -29,9 +27,19 @@ def audit_packet(report):
     analysis['orphan_nodes'] = sorted(p for p in orphans if p in paths)
     analysis['cycles_detected'] = [cycle for cycle in cycles if set(cycle) & paths]
     analysis['context_scope'] = '孤立节点和环仅发送涉及本次文件的项；全局数量仅供背景，不作本次违规结论；完整列表封存在本地'
-    data['delivery'] = {'graph_scope': 'changed_files_and_direct_dependencies',
-                        'full_evidence': '本地已封存，缺证时请求指定文件，不能把局部视图当全局无风险证明'}
-    text = json.dumps(data,ensure_ascii=False,separators=(',',':'))
+    from archguard.graph_delivery import graph_changes
+    evidence = {
+        'audit_one': {k:data[k] for k in ('changed_files','diff_summary','architecture_signals','signal_summary','ledger_verification')},
+        'information': {'prompts':data['prompts'], 'ledger_events':data['ledger_events'],
+                        'graph_changes':graph_changes(report, paths)},
+        'other': {k:data[k] for k in ('schema_version','audit_id','timestamp','commit_hash','base_commit','commit_message','analysis_status','diagnostics','input_hash')},
+    }
+    # 拓扑增删详情只存在图谱变化清单中，审计一保留检查发现。
+    evidence['audit_one']['graph_checks'] = {k:v for k,v in analysis.items()
+        if k not in ('nodes_added','nodes_removed','edges_added','edges_removed')}
+    evidence['other']['delivery_schema_version'] = 2
+    evidence['other']['scope'] = '实际 diff 仅在 audit_one；账本保留本轮原始事件；图谱详情见 information.graph_changes；完整证据本地可定点查询'
+    text = json.dumps(evidence,ensure_ascii=False,separators=(',',':'))
     if len(text) > MAX_PACKET_CHARS:
         raise ValueError(f'审计证据包 {len(text)} 字符超过 {MAX_PACKET_CHARS} 字符预算；已停止模型派发，需缩小提交或分段审阅，不截断证据')
     return text
@@ -66,9 +74,26 @@ def build_message(report, request_id=None, include_instructions=True):
 
 
 def payload_manifest(report):
+    import math
     parts = message_parts(report, '0'*32)
     data = json.loads(parts['evidence'])
-    return {'unit':'Unicode 字符（不是实际 token）', 'message_characters':len(build_message(report,'0'*32)),
-            'limit':MAX_MESSAGE_CHARS,'sections':{k:len(v) for k,v in parts.items()},
+    total = len(build_message(report, '0'*32))
+    def row(name, size):
+        return {'name':name, 'characters':size, 'estimated_tokens_low':math.ceil(size/4),
+                'estimated_tokens_high':size, 'estimated_share_percent':round(size*100/total, 2),
+                'actual_tokens':None}
+    groups = []
+    prompt_rows = [row(k,len(parts[k])) for k in ('instructions','contract','verdict_schema')]
+    for name, rows in [('提示词类',prompt_rows)] + [(name,[row(k,len(json.dumps(v,ensure_ascii=False,separators=(',',':')))) for k,v in data[key].items()])
+            for key,name in [('audit_one','审计一报告类'),('information','信息类'),('other','其他类')]]:
+        groups.append({'name':name, 'items':rows})
+    used = sum(r['characters'] for g in groups for r in g['items'])
+    groups[-1]['items'].append(row('字段名与分隔符',total-used))
+    for group in groups:
+        group['subtotal'] = row('小计',sum(r['characters'] for r in group['items']))
+    return {'unit':'Unicode 字符及启发式 token 估算，非宿主实测',
+            'message_characters':total, 'limit':MAX_MESSAGE_CHARS,
+            'categories':groups, 'total':row('完整新增消息合计',total),
+            'sections':{k:len(v) for k,v in parts.items()},
             'evidence_fields':{k:len(json.dumps(v,ensure_ascii=False,separators=(',',':'))) for k,v in data.items()},
-            'scope':'完整证据保留本地；载荷大小不含宿主历史、系统工具描述和模型输出'}
+            'scope':'百分比按字符占比近似；不含宿主工具、系统、历史、多次调用与输出；字段实测未知，不用整轮用量分摊'}

@@ -110,14 +110,29 @@ def render(root, report, verdict):
     record = next((r for r in records if r.get('thread_id') == thread), {})
     turns = [v for v in record.get('turns',{}).values() if v.get('audit_id') == report.audit_id]
     turn = turns[-1] if turns else {}
-    budget = estimate(audit_packet(report))
-    lines.append(f'| B · 独立裁决 | 新增证据载荷约 {budget["estimated_payload_tokens_low"]}–{budget["estimated_payload_tokens_high"]} token | {turn.get("counts",{}).get("totalTokens") or "待结算/未知"} | {record.get("latest",{}).get("counts",{}).get("totalTokens", "未知")} |')
+    from archguard.delivery import build_message
+    budget = estimate(build_message(report, '0'*32))
+    lines.append(f'| B · 独立裁决 | 完整新增消息约 {budget["estimated_payload_tokens_low"]}–{budget["estimated_payload_tokens_high"]} token | {turn.get("counts",{}).get("totalTokens") or "待结算/未知"} | {record.get("latest",{}).get("counts",{}).get("totalTokens", "未知")} |')
     for thread_id, observation in totals.items():
         lines.append('')
         lines.append(f'A 累计来源：任务 `{thread_id}`；观测时间（Unix 秒）：{observation.get("observed_at", "未知")}；{observation["status"]}。')
-    lines += ['', '预测仅按字符数/4 至字符数估计证据文本，不含系统提示、工具、历史和输出，不是完整调用预算。A 各环节实际用量必须有对应快照；未记录、未绑定或尚未结算不能补造。未执行步骤由 A 根据执行记录注明“不适用”。', '',
+    lines += ['', '预测仅按字符数/4 至字符数估计新增消息（含插件守则），不含宿主系统提示、工具、历史和输出，不是完整调用预算。A 各环节实际用量必须有对应快照；未记录、未绑定或尚未结算不能补造。未执行步骤由 A 根据执行记录注明“不适用”。', '',
               '累计是宿主当前窗口计数，包含历史上下文与业务开发；缓存输入已包含在输入中，不重复相加。', '',
               '日志：`.ide_audit/operation-usage/`；阶段：`.ide_audit/usage-phases/`。']
+    from archguard.delivery import payload_manifest
+    try:
+        manifest = payload_manifest(report)
+        lines += ['', '### B 新增输入按类别估算', '', manifest['scope'], '',
+                  '| 类别 | 信息项 | 估算 token | 新增载荷占比 |', '|---|---|---|---|']
+        for group in manifest['categories']:
+            for item in group['items'] + [group['subtotal']]:
+                lines.append('| ' + ' | '.join(cell(v) for v in (group['name'], item['name'],
+                    str(item['estimated_tokens_low']) + '–' + str(item['estimated_tokens_high']),
+                    str(item['estimated_share_percent']) + '%')) + ' |')
+        total = manifest['total']
+        lines.append('| 总计 | 完整新增消息（非额外内容） | ' + str(total['estimated_tokens_low']) + '–' + str(total['estimated_tokens_high']) + ' | 100% |')
+    except ValueError as exc:
+        lines += ['', '新增输入估算不可用：' + str(exc)]
     return '\n'.join(lines) + '\n'
 
 

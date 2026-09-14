@@ -119,3 +119,6 @@ B 守则已整合为单份短文，不再在 B 追加开发/升级历史。事�
 裁决回收成功仅代表 audit_status=completed。检查 delivery.report_delivery_status / collect 返回的 report_delivery_status，requires_b_panel 表示还必须用 open_in_codex 把 report_path 打开到 thread_id 指定的 B 面板。不得只贴机器 JSON 或称整套完成。旧 B 可能保留早期高优先级“仅 JSON”指令，普通新派发消息不能可靠覆盖；此时保留原 B，不重复审计，以其真实裁决生成完整四段文件作为可读交付。不得伪称旧 B 聊天指令已更新。
 
 已完成历史审计可用独立 CLI report-delivery --audit-id <SHA> 本地生成完整报告并获取 B 面板交付信息，不再调用模型审计。B 的本轮 token 必须按当前 audit_id 匹配，尚未回收时不能用上一轮计数代替。
+
+
+0.4.9 输入协议：audit_one 包含唯一实际 diff 和插件物理核验；information 包含本轮需求、原始账本、变化图谱及上游。图谱前后节点值按 node_values 标识引用。get_audit_input_manifest 和最终报告提供分类 token 粗估及占比，不是宿主字段实测。不要重复读取整份事实包或为排版重发审计。

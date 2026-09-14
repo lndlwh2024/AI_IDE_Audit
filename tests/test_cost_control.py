@@ -37,9 +37,10 @@ def test_audit_packet_keeps_all_diff_and_one_hop_without_entire_graph():
     report.changed_files=[{'path':'service.py','diff_content':'actual patch'}]
     report.graph_after={'nodes':{'service.py':{},'dependency.py':{},**{f'unrelated{i}.py':{} for i in range(5000)}},
                         'edges':[{'from':'service.py','to':'dependency.py','type':'imports'}]}
+    report.graph_before = report.graph_after
     value=json.loads(audit_packet(report))
-    assert set(value['graph_after']['nodes'])=={'service.py','dependency.py'}
-    assert value['changed_files']==report.changed_files
+    assert set(value['information']['graph_changes']['physical']['context_nodes'])=={'service.py','dependency.py'}
+    assert value['audit_one']['changed_files']==report.changed_files
     assert len(audit_packet(report)) < 3000
     report.prompts=[{'text':'x'*65000}]
     with pytest.raises(ValueError,match='预算'):audit_packet(report)
