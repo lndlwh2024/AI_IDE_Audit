@@ -24,17 +24,24 @@ class CursorManager:
         if data is None:
             return CursorFile(ai_ide_id=ide_id, sessions={})
         if 'sessions' not in data:
-            # V1 平面游标保持原记录文件，当前新会话必须全量读取。
+            # V1 平面游标保持原记录文件，当前新会话按最近两条接管。
             return CursorFile(ai_ide_id=ide_id, sessions={})
         cursor = CursorFile.model_validate(data)
         if cursor.ai_ide_id != ide_id:
             raise ValueError('游标文件与 IDE 身份不一致')
         return cursor
 
-    def start_session(self, ide_id):
+    def start_session(self, ide_id, thread_id=None):
         valid_id(ide_id)
         with transaction(self.root, 'cursor-' + ide_id):
             cursor = self.read_cursor(ide_id)
+            if thread_id:
+                from uuid import UUID
+                thread_id = str(UUID(thread_id))
+                for existing_id, existing in cursor.sessions.items():
+                    if getattr(existing, 'thread_id', None) == thread_id:
+                        return existing_id
+            floor = max(0, len(self.ledger.read_all_events()) - 2)
             prefix = ide_id.upper() + '_' + datetime.now().strftime('%Y%m%d%H%M') + '_'
             used = [s[len(prefix):] for s in cursor.sessions if s.startswith(prefix)]
             for sequence in range(26 * 9999):
@@ -44,7 +51,7 @@ class CursorManager:
                     break
             else:
                 raise ValueError('本分钟会话编号已耗尽')
-            cursor.sessions[session_id] = CursorSession(last_read_version='v0000', last_read_line=0)
+            cursor.sessions[session_id] = CursorSession(last_read_version=f'v{floor:04d}', last_read_line=floor, thread_id=thread_id, intake_policy='latest_two')
             atomic_json(self.cursors_dir / (ide_id + '.json'), cursor.model_dump())
             return session_id
 
@@ -54,8 +61,11 @@ class CursorManager:
             raise ValueError('版本与行号不一致')
         with transaction(self.root, 'cursor-' + ide_id):
             cursor = self.read_cursor(ide_id)
-            cursor.sessions[session_id] = CursorSession(last_read_version=version, last_read_line=line,
-                last_read_timestamp=datetime.now(timezone.utc).isoformat())
+            previous = cursor.sessions.get(session_id)
+            values = previous.model_dump() if previous else {}
+            values.update(last_read_version=version, last_read_line=line,
+                          last_read_timestamp=datetime.now(timezone.utc).isoformat())
+            cursor.sessions[session_id] = CursorSession.model_validate(values)
             atomic_json(self.cursors_dir / (ide_id + '.json'), cursor.model_dump())
 
     def get_unread_events(self, ide_id, session_id):
@@ -64,7 +74,7 @@ class CursorManager:
         events = self.ledger.read_all_events()
         line = session.last_read_line if session else None
         if line is None or line > len(events) or line < 0:
-            line = 0
+            line = max(0, len(events) - 2)
         elif line and events[line - 1].version != session.last_read_version:
-            line = 0
+            line = max(0, len(events) - 2)
         return events[line:], len(events)

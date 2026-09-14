@@ -75,7 +75,7 @@ def render(root, report, verdict):
     threads = {r.get('thread_id') for r in associated if r.get('role') == 'A' and r.get('thread_id')}
     totals = {t: window_total(root,t) for t in threads}
     operations = [read_json(p,{}) for p in metadata_path(root,'operation-usage').glob('*.json')]
-    tool_phases = {'begin_edit':'edit_lock','renew_edit':'edit_lock','end_edit':'edit_unlock','complete_sync_operation':'record_changes','record_sync_event':'record_changes','get_sync_updates':'align_updates','sync_graph':'graph_update','update_architecture_graph':'graph_update'}
+    tool_phases = {'begin_edit':'edit_lock','renew_edit':'edit_lock','end_edit':'edit_unlock','complete_sync_operation':'record_changes','record_sync_event':'record_changes','get_sync_updates':'align_updates','sync_graph':'graph_update','update_architecture_graph':'graph_update','patch_architecture_graph':'graph_update'}
     for title, phase in phases:
         # 只引用显式绑定本提交的记录，绝不拿其他开发区间填补空白。
         rows = [r for r in all_rows if (r.get('audit_id') == report.audit_id or r.get('id') in bound) and r.get('phase') == phase]

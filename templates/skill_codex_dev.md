@@ -106,3 +106,9 @@ B 守则已整合为单份短文，不再在 B 追加开发/升级历史。事�
 裁决回收成功仅代表 audit_status=completed。检查 delivery.report_delivery_status / collect 返回的 report_delivery_status，requires_b_panel 表示还必须用 open_in_codex 把 report_path 打开到 thread_id 指定的 B 面板。不得只贴机器 JSON 或称整套完成。旧 B 可能保留早期高优先级“仅 JSON”指令，普通新派发消息不能可靠覆盖；此时保留原 B，不重复审计，以其真实裁决生成完整四段文件作为可读交付。不得伪称旧 B 聊天指令已更新。
 
 已完成历史审计可用独立 CLI report-delivery --audit-id <SHA> 本地生成完整报告并获取 B 面板交付信息，不再调用模型审计。B 的本轮 token 必须按当前 audit_id 匹配，尚未回收时不能用上一轮计数代替。
+
+
+## 0.4.10 接管与局部图谱维护（覆盖旧全量接管规则）
+新 A 或身份/已读位置未知时，只读取最近 2 条账本；确认这两条后即完成接管，后续只读新增，不补读早期历史。原 A 重连时 start_sync_session/enter_sync_session 传当前真实 Codex 任务 ID（thread_id），插件恢复该任务已读位置；不能拿插件连接编号当任务 ID。身份无法取得时按最近两条兜底。enter_sync_session 返回 session_id，后续使用返回值，不坚持使用失效编号。新 A 阅读当前图谱摘要和必要节点、当前有效问题，不加载整份历史流水。
+先用 get_working_graph 指定相关文件，取得当前工作态节点和版本；不要把上一提交审计快照当成当前图谱。图谱职责/业务关系更新优先使用 patch_architecture_graph：只传 nodes_upsert（局部字段）、nodes_remove、edges_add、edges_remove、expected_version 与真实账本 trigger_version。删除节点时插件清理关联边；版本冲突只重读相关节点后调整，不重新提交整个项目图谱。旧完整图谱接口仅兼容保留。
+开发中插件维护需求、锁、账本和图谱，commit 前封存申报；只有 commit 成功后执行审计一及 B 审计二。无实际修改不制造修改事件；修改但未提交仍记账。程序全量读取本地账本不等于发送全文给模型。

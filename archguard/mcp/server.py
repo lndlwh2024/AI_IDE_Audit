@@ -272,6 +272,28 @@ def create_server(project_root, role='audit', audit_id=None):
                 raise ValueError('图谱变动必须关联真实账本版本')
             return graph_summary(GraphManager(root).update_graph(graph, ide_id, trigger_version).model_dump(mode='json', by_alias=True))
 
+        @tool(description='A 读取当前工作态图谱摘要或指定节点及直接依赖；不是上一提交快照，供局部修改使用')
+        @synchronized
+        def get_working_graph(file_paths: list[str] | None = None) -> dict:
+            graph = GraphManager(root).read_graph().model_dump(mode='json', by_alias=True)
+            if file_paths is None:
+                return graph_summary(graph)
+            if not 1 <= len(file_paths) <= 10:
+                raise ValueError('每次指定 1 到 10 个文件')
+            from archguard.core.ledger_analyzer import normalize
+            value = graph_slice(graph, [normalize(p) for p in file_paths])
+            if len(json.dumps(value, ensure_ascii=False)) > 12000:
+                raise ValueError('相关节点超过预算，请缩小文件范围')
+            return value
+
+        @tool(description='A 局部修改图谱：只传变动节点字段和边，expected_version 防止覆盖其他更新；不传完整图谱')
+        @synchronized
+        def patch_architecture_graph(ide_id: str, trigger_version: str, expected_version: str,
+                                     nodes_upsert: dict | None = None, nodes_remove: list[str] | None = None,
+                                     edges_add: list[dict] | None = None, edges_remove: list[dict] | None = None) -> dict:
+            return graph_summary(GraphManager(root).patch(ide_id, trigger_version, expected_version,
+                nodes_upsert or {}, nodes_remove or [], edges_add or [], edges_remove or []).model_dump(mode='json', by_alias=True))
+
         @tool(description='逐条记录原始用户需求，绑定记录时的 Git 基线')
         def record_prompt(prompt_text: str) -> dict:
             with control.guarded(root):
@@ -290,20 +312,21 @@ def create_server(project_root, role='audit', audit_id=None):
             return graph_summary(GraphManager(root).sync(ide_id, trigger_version).model_dump(mode='json', by_alias=True))
 
         @tool(description='A 首次接入已授权项目：更新图谱和同步检查点，成功后才启用')
-        def start_sync_session(ide_id: str) -> str:
-            result = control.refresh_a(root, ide_id)
+        def start_sync_session(ide_id: str, thread_id: str | None = None) -> str:
+            result = control.refresh_a(root, ide_id, thread_id=thread_id or measurement['thread_id'])
             session_id = result['session_id']
             ready_sessions.add((ide_id, session_id))
             wake_queue()
             return session_id
 
         @tool(description='只有 A 执行：恢复已授权项目的图谱和代码信息同步；B 不可调用')
-        def enter_sync_session(ide_id: str, session_id: str) -> dict:
+        def enter_sync_session(ide_id: str, session_id: str, thread_id: str | None = None) -> dict:
             ready_sessions.discard((ide_id, session_id))
-            result = control.refresh_a(root, ide_id, session_id)
+            result = control.refresh_a(root, ide_id, session_id, thread_id=thread_id or measurement['thread_id'])
+            session_id = result['session_id']
             ready_sessions.add((ide_id, session_id))
             wake_queue()
-            return graph_summary(result['graph'])
+            return dict(graph_summary(result['graph']), session_id=session_id)
 
         @tool(description='A 长时间编辑时续期自己持有的文件租约；失效时必须停止编辑并重新处理冲突')
         @synchronized

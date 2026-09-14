@@ -67,8 +67,8 @@ def test_incremental_mcp_pages_do_not_return_full_graph(tmp_path):
     from tests.test_remaining_features import event
     from archguard.mcp.server import create_server
     authorize(tmp_path)
-    for _ in range(12):LedgerManager(tmp_path).append_event(event())
     sid=CursorManager(tmp_path).start_session('codex')
+    for _ in range(12):LedgerManager(tmp_path).append_event(event())
     app=create_server(tmp_path,'dev')
     async def call(name,args):
         result=await app.call_tool(name,args)

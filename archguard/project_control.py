@@ -93,7 +93,7 @@ def verify_project(root):
         raise PermissionError('当前 Codex 项目归属已变化，需重新授权')
 
 
-def refresh_a(root, ide_id, session_id=None):
+def refresh_a(root, ide_id, session_id=None, thread_id=None):
     """只有开发端注册此入口；同步到当前状态，不逐提交补造历史。"""
     import git
     from archguard.sync.graph import GraphManager
@@ -106,8 +106,10 @@ def refresh_a(root, ide_id, session_id=None):
         with transaction(root, 'workflow'):
             SyncWorkflow(root).recover()
             cursors = CursorManager(root)
-            if session_id and session_id not in cursors.read_cursor(ide_id).sessions:
-                raise ValueError('协同会话不存在')
+            if thread_id:
+                session_id = cursors.start_session(ide_id, thread_id)
+            elif session_id not in cursors.read_cursor(ide_id).sessions:
+                session_id = None
             repo = git.Repo(root)
             head = repo.head.commit.hexsha if repo.head.is_valid() else None
             previous = state.get('checkpoint', {}).get('head')
@@ -120,7 +122,7 @@ def refresh_a(root, ide_id, session_id=None):
                 except (ValueError, git.GitCommandError):
                     pass
             graph = GraphManager(root).sync(ide_id)
-            session_id = session_id or cursors.start_session(ide_id)
+            session_id = session_id or cursors.start_session(ide_id, thread_id)
             # 暂停前未封存需求保留为历史，不能授权恢复后的新提交。
             if state['status'] == 'pending_a':
                 with transaction(root):

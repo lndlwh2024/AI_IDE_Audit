@@ -139,3 +139,52 @@ class GraphManager:
         with transaction(self.project_root, 'graph'):
             self._recover()
             return self._commit(self.read_graph(), graph.model_copy(deep=True), ide_id, trigger_version)
+
+    def patch(self, ide_id, trigger_version, expected_version, nodes_upsert, nodes_remove, edges_add, edges_remove):
+        """A 只提交变动；程序在锁内合并，版本不一致时拒绝覆盖。"""
+        from .ledger import LedgerManager
+        from .schemas import GraphEdge
+        from archguard.core.ledger_analyzer import normalize
+        if trigger_version not in {e.version for e in LedgerManager(self.project_root).read_all_events()}:
+            raise ValueError('图谱变动必须关联真实账本版本')
+        with transaction(self.project_root, 'graph'):
+            self._recover()
+            old = self.read_graph()
+            if old.meta.version != expected_version:
+                raise ValueError('图谱版本已变化，请重新读取相关节点后提交局部修改')
+            if set(nodes_upsert) & set(nodes_remove):
+                raise ValueError('不能同时更新和删除同一节点')
+            data = old.model_dump(by_alias=True)
+            for path in nodes_remove:
+                normalize(path)
+                if path not in data['nodes']:
+                    raise ValueError('待删除节点不存在: ' + path)
+                del data['nodes'][path]
+            for path, fields in nodes_upsert.items():
+                normalize(path)
+                target = (self.project_root / path).resolve()
+                if not target.is_relative_to(self.project_root) or not target.is_file():
+                    raise ValueError('图谱声明包含不存在的项目文件: ' + path)
+                if not isinstance(fields, dict):
+                    raise ValueError('节点更新必须为字段对象')
+                data['nodes'][path] = dict(data['nodes'].get(path, {}), **fields)
+            def key(edge):
+                return (edge['from'], edge['to'], edge['type'])
+            edges = {key(e):e for e in data['edges']}
+            for item in edges_remove:
+                edge = GraphEdge.model_validate(item).model_dump(by_alias=True)
+                if key(edge) not in edges:
+                    raise ValueError('待删除依赖不存在')
+                del edges[key(edge)]
+            # 删除节点同时删除其关联边，不留下悬空引用。
+            edges = {k:e for k,e in edges.items() if e['from'] not in nodes_remove and e['to'] not in nodes_remove}
+            for item in edges_add:
+                edge = GraphEdge.model_validate(item).model_dump(by_alias=True)
+                edges[key(edge)] = edge
+            for edge in edges.values():
+                if edge['from'] not in data['nodes'] or (edge['to'] not in data['nodes'] and not edge['to'].startswith('external:')):
+                    raise ValueError('图谱依赖引用不存在的节点')
+            data['edges'] = list(edges.values())
+            candidate = CodeGraph.model_validate(data)
+            candidate.modules = sorted({n.module for n in candidate.nodes.values()})
+            return self._commit(old, candidate, ide_id, trigger_version)
