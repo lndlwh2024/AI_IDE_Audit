@@ -17,10 +17,13 @@ def test_machine_appendix_and_legacy():
 def test_report_sections_and_unknown_are_explicit(tmp_path):
     report = make_report()
     text = render(tmp_path, report, verdict())
-    for section in ['审计一','审计二','最终审计结论','Token 预测与实际用量','整改与复核','无阶段记录']:
+    for section in ['审计一','审计二','最终审计结论','Token 实际用量','整改与复核','无阶段记录']:
         assert section in text
     assert '本次实际 token' in text and '窗口累计 token' in text
-    assert '100–500' in text
+    for title in ['1. 代码与账本对比', '2. 架构变化检查', '1. 文件修改是否符合需求', '2. 架构变化是否符合需求', '3. 代码账本是否如实记录']:
+        assert '### ' + title in text
+    assert '预测' not in text and '估算' not in text
+    assert 'B 输入与输出实际用量' in text
     assert not (tmp_path / '.ide_audit').exists()
     assert estimate('x'*100)['estimated_payload_tokens_low'] == 25
 
